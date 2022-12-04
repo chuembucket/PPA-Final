@@ -1,0 +1,454 @@
+---
+title: "PPDFinal"
+author: "Charlie Huemmler"
+date: "2022-11-29"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+=
+```
+
+
+setup
+
+```{r}
+library(tidyverse)
+library(sf)
+library(lubridate)
+library(tigris)
+library(RSocrata)
+library(purrr)
+library(riem)
+library(plotly)
+
+
+sf::sf_use_s2(FALSE)
+
+options(tigris_class = "sf")
+source("https://raw.githubusercontent.com/urbanSpatial/Public-Policy-Analytics-Landing/master/functions.r")
+
+```
+
+Pull in SF data
+
+```{r load meters}
+meters <- read.socrata('https://data.sfgov.org/resource/8vzz-qzz9.json') %>% st_as_sf(coords = c('longitude','latitude'),crs = 4326)
+
+```
+
+```{r load trips}
+trips <- read.socrata("https://data.sfgov.org/resource/imvp-dq3v.csv?$where=session_start_dt between '2017-06-01T00:00:00' and '2017-06-21T00:00:00'")
+
+trips <- trips %>% mutate(
+  start_time = session_start_dt %>% as_datetime(),
+  park_time_60 = start_time %>% floor_date(unit = '1 hour'))
+
+smalltrips <- trips %>% filter(park_time_60 %>% week == 23)
+
+
+```
+
+pull in streets, parks
+
+```{r}
+
+
+sfbounds <- c(ymax= 100000,ymin= 63410.51,xmin= 139343.4 , xmax=177200 ) 
+
+water <- area_water('CA', 'San Francisco') %>% st_transform(crs = 4326) %>% filter(AWATER <= 138392892) %>% st_crop(y=sfbounds)
+
+streets <- read_sf('C:/Users/cchue/Documents/Penn MUSA/Public Policy Analytics/Final/streets.geojson') %>% st_transform(crs = 7132)%>% st_crop(y=sfbounds)
+
+ggplot()+
+  geom_sf(data = water, color = NA, fill = 'lightblue')+
+  geom_sf(data = streets%>% filter(classcode ==5))+
+  geom_sf(data = streets %>% filter(classcode ==1),size=1.1)+
+  geom_sf(data = meters, aes(color =cap_color))+
+  mapTheme()
+
+
+
+#ggplotly(g)
+dtbounds <- c(ymax= 37.79,ymin= 37.77,xmin= -122.424 , xmax=-120)
+dt_meters <- meters %>% st_crop(y=dtbounds)
+
+ggplot()+
+  #geom_sf(data = water, color = NA, fill = 'lightblue')+
+  #geom_sf(data = streets%>% filter(classcode ==5))+
+  #geom_sf(data = streets %>% filter(classcode ==1),size=1.1)+
+  geom_sf(data =dt_meters)
+
+dt_meters$post_id
+
+smalltrips_dt <-smalltrips %>% filter(post_id %in% dt_meters$post_id)
+```
+
+
+
+
+```{r panelling}
+
+study.panel <- 
+  expand.grid(hour_unit = unique(trips$park_time_60), 
+              block = unique(trips$street_block))
+
+nrow(study.panel)      
+
+#fill panel
+park.panel_bare <- 
+  trips %>%
+  mutate(park_counter = 1) %>%
+  right_join(study.panel, by = c('park_time_60' = 'hour_unit', 'street_block' = 'block')) %>% 
+  group_by(park_time_60, street_block) %>%
+  summarize(start_count = sum(park_counter, na.rm=T),
+            revenue = sum(gross_paid_amt, na.rm = T))
+
+
+
+```
+```{r}
+trips <- trips %>% 
+  mutate(end_interval15 = floor_date(ymd_hms(session_end_dt), unit = "15 mins"),
+         start_interval15 = floor_date(ymd_hms(session_start_dt), unit = "15 mins"),
+         length_sec = end_interval15 - start_interval15,
+         length_mins = length_sec/60)
+
+ggplot(trips)+
+  geom_histogram(aes(x = as.numeric(length_mins)))+
+  geom_vline(xintercept = 150)
+```
+
+
+
+## occupany code
+```{r}
+# estimate parking occupancy using Sf Park data
+# Code by Michael Fichman - mfichman@upenn.edu
+
+# This is a really basic mock-up of how I estimated Pittsburgh parking occupancies to
+# the 15 minute interval. I did that project before tidyverse, so it's not code that you
+# would find particularly useful.
+
+# There is 100% a better way to do this than to create a bunch of stuff in a mutate
+# statement - this is prime for a looped or more algorithmic type of code. It's also very "blunt force"
+# in how long it assumes people are parking - there is a lot of rounding.
+
+# This is a panel data setup
+
+# The basic idea is you buy, say, an hour worth of parking, and you "get" 4
+# 15 minute "tokens" that can be "dropped" in the occupancy counter of each of the 
+# upcoming slots in the panel.
+
+# THis is code just for a few days - but you would want to be doing this for many meters.
+# This code assumes you can buy a max of 3 hours of parking (e.g. 12 tokens) - you might need to adjust that.
+
+
+
+#dat <- read.socrata("https://data.sfgov.org/resource/imvp-dq3v.json?post_id=591-25480")
+
+# Divide transaction lengths into 15 minute intervals
+# THis is done very roughly, you might want to make this more exact
+# If a transaction is, say 45 minutes, drop tokens in tokens_00, 01, 02
+
+dat2 <- smalltrips_dt %>%
+  mutate(end_interval15 = floor_date(ymd_hms(session_end_dt), unit = "15 mins"),
+         start_interval15 = floor_date(ymd_hms(session_start_dt), unit = "15 mins"),
+         length = end_interval15 - start_interval15,
+         tokens = as.numeric(length )/ 900,
+         tokens_00 = ifelse(tokens >= 1, 1, 0),
+         tokens_01 = ifelse(tokens >= 2, 1, 0),
+         tokens_02 = ifelse(tokens >= 3, 1, 0),
+         tokens_03 = ifelse(tokens >= 4, 1, 0),
+         tokens_04 = ifelse(tokens >= 5, 1, 0),
+         tokens_05 = ifelse(tokens >= 6, 1, 0),
+         tokens_06 = ifelse(tokens >= 7, 1, 0),
+         tokens_07 = ifelse(tokens >= 8, 1, 0),
+         tokens_08 = ifelse(tokens >= 9, 1, 0),
+         tokens_09 = ifelse(tokens >= 10, 1, 0),
+         tokens_10 = ifelse(tokens >= 11, 1, 0),
+         tokens_11 = ifelse(tokens >= 12, 1, 0))
+
+# Summarize this data by start time and meter
+
+dat3 <- dat2 %>%
+  group_by(start_interval15, post_id) %>%
+  summarize(tokens_00 = sum(tokens_00),
+            tokens_01 = sum(tokens_01),
+            tokens_02 = sum(tokens_02),
+            tokens_03 = sum(tokens_03),
+            tokens_04 = sum(tokens_04),
+            tokens_05 = sum(tokens_05),
+            tokens_06 = sum(tokens_06),
+            tokens_07 = sum(tokens_07),
+            tokens_08 = sum(tokens_08),
+            tokens_09 = sum(tokens_09),
+            tokens_10 = sum(tokens_10),
+            tokens_11 = sum(tokens_11))
+
+# Create a panel consisting of all the time/meter observations in the set
+# Add a day of the year to each observation, join it to the transaction data
+# This might need to be tinkered with to make sure every time period for every meter is included
+# There are some weird one-off transactions off hours that might need to be cleaned out
+
+study.panel <- 
+  expand.grid(start_interval15=unique(dat3$start_interval15), 
+              post_id = unique(dat3$post_id)) %>%
+  mutate(doty = yday(start_interval15)) %>%
+  left_join(., dat3)
+
+# Estimate occupancy but compiling the current tokens and the previous tokens
+# that carry forward - i think (i think) the observations at 15:00 hours are the people who start
+# the day parking - not every place has the same metered hours
+
+transaction_panel <- study.panel %>%
+  replace(is.na(.), 0) %>%
+  arrange(start_interval15) %>%
+  group_by(post_id, doty) %>%
+  mutate(lag01 = ifelse(is.na(lag(tokens_01)) == FALSE, lag(tokens_01), 0),
+         lag02 = ifelse(is.na(lag(tokens_02)) == FALSE, lag(tokens_02), 0),
+         lag03 = ifelse(is.na(lag(tokens_03)) == FALSE, lag(tokens_03), 0),
+         lag04 = ifelse(is.na(lag(tokens_04)) == FALSE, lag(tokens_04), 0),
+         lag05 = ifelse(is.na(lag(tokens_05)) == FALSE, lag(tokens_05), 0),
+         lag06 = ifelse(is.na(lag(tokens_06)) == FALSE, lag(tokens_06), 0),
+         lag07 = ifelse(is.na(lag(tokens_07)) == FALSE, lag(tokens_07), 0),
+         lag08 = ifelse(is.na(lag(tokens_08)) == FALSE, lag(tokens_08), 0),
+         lag09 = ifelse(is.na(lag(tokens_08)) == FALSE, lag(tokens_09), 0),
+         lag10 = ifelse(is.na(lag(tokens_10)) == FALSE, lag(tokens_10), 0),
+         lag11 = ifelse(is.na(lag(tokens_11)) == FALSE, lag(tokens_11), 0)) %>%
+  mutate(occupancy = tokens_00 + lag01 + lag02 + lag03+ lag04 + lag05 +
+           lag06 + lag07 + lag08+ lag09 + lag10 + lag11) %>%
+ # filter(is.na(occupancy) == FALSE) %>%
+  select(start_interval15, post_id, occupancy)
+
+# join everything
+
+transaction_panel <- left_join(transaction_panel, smalltrips_dt %>% 
+                           select(post_id, street_block) %>%
+              unique())
+
+
+occ_panel <- transaction_panel %>% mutate(
+  spot = 1
+) %>% group_by(street_block, start_interval15) %>% summarise(
+  parked = sum(occupancy),
+  total_spots = sum(spot),
+  pct_occ = parked/total_spots
+)
+  
+
+```
+
+
+
+```{r meter graphing}
+
+
+t <- park.panel %>%
+  group_by(park_time_60) %>% 
+  summarize(revenue = sum(revenue)) %>% 
+  ungroup()
+
+ggplot(t, aes(park_time_60, revenue)) + geom_line() +
+  #geom_vline(data = mondays, aes(xintercept = monday)) +
+  labs(title="Total Revenue per Hour",
+    subtitle="Week 22", 
+    x="", y="") +
+  plotTheme()
+
+
+
+blocks<-factor(smalltrips_dt$street_block) %>% table() %>% as.data.frame()
+meters1<-factor(smalltrips_dt$post_id) %>% table() %>% as.data.frame()
+
+
+
+
+```
+
+
+
+## making da pretty map
+
+
+
+
+
+
+```{r streets meters join}
+
+meters_buffer <- meters %>% st_buffer(50) %>% st_union()
+
+ggplot(meters_buffer)+
+  geom_sf()
+
+streets1 <- streets %>% filter(classcode ==5)
+ugh
+#streets1$metered <- st_touches(streets1, meters_buffer, prepared = T)
+
+ggplot()+
+  geom_sf(data = water, color = NA, fill = 'lightblue')+
+  geom_sf(data = streets %>% filter(classcode ==1),size=1.1)+
+  geom_sf(data = streets %>% filter(classcode ==5))+
+          #, aes(color = metered))+
+  geom_sf(data = meters, color ='red')+
+  mapTheme()
+
+ggplot(streets1)+
+  geom_sf(aes(color = metered))
+```
+
+```{r}
+blocks <-   inner_join(dt_meters, smalltrips_dt %>% 
+                           select(post_id, street_block)) %>% unique()
+
+mpb <- smalltrips_dt %>% 
+  group_by(street_block) %>% 
+  summarise(meters_per_block = length(unique(post_id)))
+
+block_join <- data.frame(block = NA, geometry = blocks[1,]$geometry) %>% st_sf()
+
+for(block in blocks$street_block %>% unique()){
+  block1 <- blocks %>% filter(street_block == block)
+  if(nrow(block1) >= 5){
+    block2 <- st_union(block1) %>% st_sf()
+    block_join <- data.frame(block = block, geometry = block2) %>% add_row(block_join, .)
+}
+  }
+
+
+block_join <- block_join %>% slice(2:nrow(block_join))
+
+block_join$id <- seq(1,nrow(block_join))
+
+
+ggplot(block_join, aes(color = id))+
+  geom_sf()+
+  theme(legend.position = 'none')
+
+
+```
+
+```{r}
+
+streets$length <- st_length(streets) %>% as.numeric()
+
+ggplot(streets)+
+  geom_histogram(aes(x=length)) 
+
+
+# streetsseg<-read_sf('https://data.sfgov.org/api/geospatial/3t7b-gebn?method=export&format=GeoJSON')
+# streetsseg$length <- st_length(streetsseg) %>% as.numeric()
+# 
+# ggplot(streetsseg)+
+#   geom_histogram(aes(x=length)) 
+```
+
+
+
+## weather
+```{r}
+
+#sdf<-riem_stations(network = 'CA_ASOS')
+weather.Data <- 
+  riem_measures(station = "SFO", date_start = "2017-06-01", date_end = "2017-06-14")
+
+weather.Panel <-  
+  weather.Data %>%
+  mutate_if(is.character, list(~replace(as.character(.), is.na(.), "0"))) %>% 
+  replace(is.na(.), 0) %>%
+  mutate(interval60 = ymd_h(substr(valid, 1, 13))) %>%
+  mutate(week = week(interval60),
+         dotw = wday(interval60, label=TRUE)) %>%
+  group_by(interval60) %>%
+  summarize(Temperature = max(tmpf),
+            Percipitation = sum(p01i),
+            Wind_Speed = max(sknt)) %>%
+  mutate(Temperature = ifelse(Temperature == 0, 42, Temperature))
+
+
+```
+
+
+```{r idne vars add}
+park.panel <- 
+  park.panel_bare %>% 
+  arrange(street_block, park_time_60) %>% 
+  group_by(street_block) %>% 
+  mutate(lagHour = dplyr::lag(revenue,1),
+         lag2Hours = dplyr::lag(revenue,2),
+         lag3Hours = dplyr::lag(revenue,3),
+         lag12Hours = dplyr::lag(revenue,12),
+         lag1day = dplyr::lag(revenue,24)) %>% 
+  ungroup() %>% 
+  left_join(weather.Panel, by = c('park_time_60' = 'interval60')) %>%
+  mutate(week = week(park_time_60),
+         dotw = wday(park_time_60, label = TRUE),
+         hour = hour(park_time_60)) 
+
+```
+
+
+
+## training/test split
+
+```{r}
+park.train <- filter(park.panel, week <24)
+park.test <- filter(park.panel, week == 24)
+```
+
+
+
+```{r}
+model_pred <- function(dat, fit){
+  pred <- predict(fit, newdata = dat)}
+
+## start count regressions 
+reg1 <- lm(revenue ~  hour + dotw, data=park.train)
+reg2 <- lm(revenue ~  street_block + dotw, data=park.train)
+reg3 <- lm(revenue ~  street_block + hour + dotw, data=park.train)
+reg4 <- lm(revenue ~  hour + dotw + 
+             lagHour + lag2Hours + lag3Hours + lag12Hours + lag1day, data=park.train)
+reg5 <- lm(revenue ~  hour + dotw + Temperature +
+             lagHour + lag2Hours + lag3Hours + lag12Hours + lag1day, data=park.train)
+
+
+park.Test.weekNest <- 
+  as.data.frame(park.test) %>%
+  nest(-week) 
+
+
+week_predictions <- 
+  park.test %>% 
+  mutate(A_Time_FE = map(.x = data, fit = reg1, .f = model_pred),
+         B_Space_FE = map(.x = data, fit = reg2, .f = model_pred),
+         C_Space_Time_FE = map(.x = data, fit = reg3, .f = model_pred),
+         D_Space_Time_Lags = map(.x = data, fit = reg4, .f = model_pred),
+         F_Space_Time_Lags_Temp = map(.x = data, fit = reg4, .f = model_pred))
+
+
+
+week_predictions <- week_predictions %>%  
+  gather(Regression, Prediction, -data, -week) %>% 
+  mutate(Observed = map(data, pull, start_count),
+         Absolute_Error = map2(Observed, Prediction,  ~ abs(.x - .y)),
+         MAE = map_dbl(Absolute_Error, mean),
+         sd_AE = map_dbl(Absolute_Error, sd)) 
+
+
+week_predictions %>% 
+  dplyr::select(week, Regression, MAE) %>%
+  gather(Variable, MAE, -Regression, -week) %>%
+  ggplot(aes(week, MAE)) + 
+  geom_bar(aes(fill = Regression), position = "dodge", stat="identity") +
+  scale_fill_manual(values = palette5) +
+  scale_x_continuous(breaks = c(18,19))+
+  labs(title = "Mean Absolute Errors by model specification and training week") +
+  plotTheme()
+
+```
+
+
+
