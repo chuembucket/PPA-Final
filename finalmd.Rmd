@@ -8,7 +8,7 @@ output: html_document
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 
-=
+
 ```
 
 
@@ -23,6 +23,7 @@ library(RSocrata)
 library(purrr)
 library(riem)
 library(plotly)
+library(gganimate)
 
 
 sf::sf_use_s2(FALSE)
@@ -60,7 +61,7 @@ sfbounds <- c(ymax= 100000,ymin= 63410.51,xmin= 139343.4 , xmax=177200 )
 
 water <- area_water('CA', 'San Francisco') %>% st_transform(crs = 4326) %>% filter(AWATER <= 138392892) %>% st_crop(y=sfbounds)
 
-streets <- read_sf('C:/Users/cchue/Documents/Penn MUSA/Public Policy Analytics/Final/streets.geojson') %>% st_transform(crs = 7132)%>% st_crop(y=sfbounds)
+streets <- read_sf('streets.geojson') %>% st_transform(crs = 7132)%>% st_crop(y=sfbounds)
 
 ggplot()+
   geom_sf(data = water, color = NA, fill = 'lightblue')+
@@ -312,7 +313,7 @@ block_join <- data.frame(block = NA, geometry = blocks[1,]$geometry) %>% st_sf()
 
 for(block in blocks$street_block %>% unique()){
   block1 <- blocks %>% filter(street_block == block)
-  if(nrow(block1) >= 5){
+  if(nrow(block1) >= 10){
     block2 <- st_union(block1) %>% st_sf()
     block_join <- data.frame(block = block, geometry = block2) %>% add_row(block_join, .)
 }
@@ -330,6 +331,27 @@ ggplot(block_join, aes(color = id))+
 
 
 ```
+
+```{r anim}
+anim_panel <- occ_panel %>% filter(start_interval15 %>% day() == 7) %>% 
+  left_join(., block_join, by = c('street_block' = 'block')) %>% na.omit() %>% st_sf() %>% 
+  mutate(occ_col = ifelse(pct_occ >= 0 & pct_occ <= 1, pct_occ, NA))
+
+
+
+ggplot(anim_panel, aes(color = occ_col))+
+  geom_sf()+
+  mapTheme()+
+  labs(title = "Rideshare pickups for one day in November 2018",
+         subtitle = "15 minute intervals: {current_frame}") +
+    transition_manual(start_interval15) +
+    mapTheme()
+
+
+
+```
+
+
 
 ```{r}
 
