@@ -2,15 +2,20 @@
 title: "PPDFinal"
 author: "Charlie Huemmler"
 date: "2022-11-29"
-output: html_document
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_collapsed: true
+    code_folding: hide
 ---
 
-```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
-
-
+```{r setup}
+knitr::opts_chunk$set(
+  warning=FALSE,
+  message=FALSE,
+  results='hide')
 ```
-
 
 setup
 
@@ -41,7 +46,7 @@ meters <- read.socrata('https://data.sfgov.org/resource/8vzz-qzz9.json') %>% st_
 ```
 
 ```{r load trips}
-trips <- read.socrata("https://data.sfgov.org/resource/imvp-dq3v.csv?$where=session_start_dt between '2017-06-01T00:00:00' and '2017-06-21T00:00:00'")
+trips <- read.socrata("https://data.sfgov.org/resource/imvp-dq3v.csv?$where=session_start_dt between '2017-06-01T00:00:00' and '2017-06-21T00:00:00'") 
 
 trips <- trips %>% mutate(
   start_time = session_start_dt %>% as_datetime(),
@@ -74,7 +79,7 @@ ggplot()+
 
 #ggplotly(g)
 dtbounds <- c(ymax= 37.79,ymin= 37.77,xmin= -122.424 , xmax=-120)
-dt_meters <- meters %>% st_crop(y=dtbounds)
+dt_meters <- meters %>% st_crop(y=dtbounds) %>% filter(meter_type == 'SS')
 
 ggplot()+
   #geom_sf(data = water, color = NA, fill = 'lightblue')+
@@ -84,7 +89,7 @@ ggplot()+
 
 dt_meters$post_id
 
-smalltrips_dt <-smalltrips %>% filter(post_id %in% dt_meters$post_id)
+smalltrips_dt <-smalltrips %>% filter(post_id %in% dt_meters$post_id) 
 ```
 
 
@@ -230,6 +235,8 @@ transaction_panel <- left_join(transaction_panel, smalltrips_dt %>%
                            select(post_id, street_block) %>%
               unique())
 
+t1 <- transaction_panel %>% filter(post_id == '202-05830')
+
 
 occ_panel <- transaction_panel %>% mutate(
   spot = 1
@@ -333,13 +340,13 @@ ggplot(block_join, aes(color = id))+
 ```
 
 ```{r anim}
-anim_panel <- occ_panel %>% filter(start_interval15 %>% day() == 7) %>% 
+anim_panel <- occ_panel %>% filter(start_interval15 %>% day() %in% c(7,8,9)) %>% 
   left_join(., block_join, by = c('street_block' = 'block')) %>% na.omit() %>% st_sf() %>% 
   mutate(occ_col = ifelse(pct_occ >= 0 & pct_occ <= 1, pct_occ, NA))
 
 
 
-ggplot(anim_panel, aes(color = occ_col))+
+mapanim <- ggplot(anim_panel, aes(color = occ_col))+
   geom_sf()+
   mapTheme()+
   labs(title = "Rideshare pickups for one day in November 2018",
@@ -347,8 +354,15 @@ ggplot(anim_panel, aes(color = occ_col))+
     transition_manual(start_interval15) +
     mapTheme()
 
+histanim <- ggplot(anim_panel)+
+  geom_histogram(aes(x = occ_col, group = street_block), bins = 100)+
+  labs(title = "",
+         subtitle = "15 minute intervals: {current_frame}") +
+    transition_manual(start_interval15) +
+    mapTheme()
 
-
+p1 <- cowplot::plot_grid(mapanim, histanim)
+animate(histanim, duration=20)
 ```
 
 
