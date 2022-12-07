@@ -74,8 +74,10 @@ ggplot()+
   geom_sf(data = streets %>% filter(classcode ==1),size=1.1)+
   geom_sf(data = meters, aes(color =cap_color))+
   mapTheme()
+```
 
 
+```{r }
 
 #ggplotly(g)
 dtbounds <- c(ymax= 37.79,ymin= 37.77,xmin= -122.424 , xmax=-120)
@@ -87,7 +89,6 @@ ggplot()+
   #geom_sf(data = streets %>% filter(classcode ==1),size=1.1)+
   geom_sf(data =dt_meters)
 
-dt_meters$post_id
 
 smalltrips_dt <-smalltrips %>% filter(post_id %in% dt_meters$post_id) 
 ```
@@ -212,7 +213,7 @@ study.panel <-
 transaction_panel <- study.panel %>%
   replace(is.na(.), 0) %>%
   arrange(start_interval15) %>%
-  group_by(post_id, doty) %>%
+  group_by(post_id, doty) %>%  
   mutate(lag01 = ifelse(is.na(lag(tokens_01)) == FALSE, lag(tokens_01), 0),
          lag02 = ifelse(is.na(lag(tokens_02)) == FALSE, lag(tokens_02), 0),
          lag03 = ifelse(is.na(lag(tokens_03)) == FALSE, lag(tokens_03), 0),
@@ -225,9 +226,11 @@ transaction_panel <- study.panel %>%
          lag10 = ifelse(is.na(lag(tokens_10)) == FALSE, lag(tokens_10), 0),
          lag11 = ifelse(is.na(lag(tokens_11)) == FALSE, lag(tokens_11), 0)) %>%
   mutate(occupancy = tokens_00 + lag01 + lag02 + lag03+ lag04 + lag05 +
-           lag06 + lag07 + lag08+ lag09 + lag10 + lag11) %>%
+           lag06 + lag07 + lag08+ lag09 + lag10 + lag11)
+
+#%>%
  # filter(is.na(occupancy) == FALSE) %>%
-  select(start_interval15, post_id, occupancy)
+  #select(start_interval15, post_id, occupancy)
 
 # join everything
 
