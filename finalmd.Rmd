@@ -50,7 +50,11 @@ trips <- read.socrata("https://data.sfgov.org/resource/imvp-dq3v.csv?$where=sess
 
 trips <- trips %>% mutate(
   start_time = session_start_dt %>% as_datetime(),
-  park_time_60 = start_time %>% floor_date(unit = '1 hour'))
+  end_time = session_end_dt %>% as_datetime(),
+  length = end_time - start_time) %>% filter(length > 600)
+
+
+
 
 smalltrips <- trips %>% filter(park_time_60 %>% week == 23)
 
@@ -116,12 +120,9 @@ park.panel_bare <-
 
 
 ```
+
 ```{r}
-trips <- trips %>% 
-  mutate(end_interval15 = floor_date(ymd_hms(session_end_dt), unit = "15 mins"),
-         start_interval15 = floor_date(ymd_hms(session_start_dt), unit = "15 mins"),
-         length_sec = end_interval15 - start_interval15,
-         length_mins = length_sec/60)
+
 
 ggplot(trips)+
   geom_histogram(aes(x = as.numeric(length_mins)))+
@@ -214,19 +215,20 @@ transaction_panel <- study.panel %>%
   replace(is.na(.), 0) %>%
   arrange(start_interval15) %>%
   group_by(post_id, doty) %>%  
-  mutate(lag01 = ifelse(is.na(lag(tokens_01)) == FALSE, lag(tokens_01), 0),
-         lag02 = ifelse(is.na(lag(tokens_02)) == FALSE, lag(tokens_02), 0),
-         lag03 = ifelse(is.na(lag(tokens_03)) == FALSE, lag(tokens_03), 0),
-         lag04 = ifelse(is.na(lag(tokens_04)) == FALSE, lag(tokens_04), 0),
-         lag05 = ifelse(is.na(lag(tokens_05)) == FALSE, lag(tokens_05), 0),
-         lag06 = ifelse(is.na(lag(tokens_06)) == FALSE, lag(tokens_06), 0),
-         lag07 = ifelse(is.na(lag(tokens_07)) == FALSE, lag(tokens_07), 0),
-         lag08 = ifelse(is.na(lag(tokens_08)) == FALSE, lag(tokens_08), 0),
-         lag09 = ifelse(is.na(lag(tokens_08)) == FALSE, lag(tokens_09), 0),
-         lag10 = ifelse(is.na(lag(tokens_10)) == FALSE, lag(tokens_10), 0),
-         lag11 = ifelse(is.na(lag(tokens_11)) == FALSE, lag(tokens_11), 0)) %>%
+  mutate(lag01 = ifelse(is.na(lag(tokens_01)) == FALSE, lag(tokens_01,1), 0),
+         lag02 = ifelse(is.na(lag(tokens_02)) == FALSE, lag(tokens_02,2), 0),
+         lag03 = ifelse(is.na(lag(tokens_03)) == FALSE, lag(tokens_03,3), 0),
+         lag04 = ifelse(is.na(lag(tokens_04)) == FALSE, lag(tokens_04,4), 0),
+         lag05 = ifelse(is.na(lag(tokens_05)) == FALSE, lag(tokens_05,5), 0),
+         lag06 = ifelse(is.na(lag(tokens_06)) == FALSE, lag(tokens_06,6), 0),
+         lag07 = ifelse(is.na(lag(tokens_07)) == FALSE, lag(tokens_07,7), 0),
+         lag08 = ifelse(is.na(lag(tokens_08)) == FALSE, lag(tokens_08,8), 0),
+         lag09 = ifelse(is.na(lag(tokens_08)) == FALSE, lag(tokens_09,9), 0),
+         lag10 = ifelse(is.na(lag(tokens_10)) == FALSE, lag(tokens_10,10), 0),
+         lag11 = ifelse(is.na(lag(tokens_11)) == FALSE, lag(tokens_11,11), 0)) %>%
+  mutate_all(funs(ifelse(is.na(.), 0, .))) %>% 
   mutate(occupancy = tokens_00 + lag01 + lag02 + lag03+ lag04 + lag05 +
-           lag06 + lag07 + lag08+ lag09 + lag10 + lag11)
+           lag06 + lag07 + lag08 + lag09 + lag10 + lag11)
 
 #%>%
  # filter(is.na(occupancy) == FALSE) %>%
@@ -247,11 +249,17 @@ occ_panel <- transaction_panel %>% mutate(
   parked = sum(occupancy),
   total_spots = sum(spot),
   pct_occ = parked/total_spots
-)
+) %>% mutate(start_interval15 = start_interval15 %>% as_datetime())
   
 
 ```
 
+```{r over occ analysis}
+overoccblock <- occ_panel %>% filter(pct_occ > 1) %>% pull(street_block) %>% unique()
+
+overocctime <- occ_panel %>% filter(pct_occ > 1) %>% pull(start_interval15) %>% unique()
+
+```
 
 
 ```{r meter graphing}
@@ -335,7 +343,7 @@ block_join <- block_join %>% slice(2:nrow(block_join))
 block_join$id <- seq(1,nrow(block_join))
 
 
-ggplot(block_join, aes(color = id))+
+ggplot(block_join, aes(color = block %in% overocc))+
   geom_sf()+
   theme(legend.position = 'none')
 
@@ -343,9 +351,9 @@ ggplot(block_join, aes(color = id))+
 ```
 
 ```{r anim}
-anim_panel <- occ_panel %>% filter(start_interval15 %>% day() %in% c(7,8,9)) %>% 
+anim_panel <- occ_panel %>% filter(start_interval15 %>% day() %in% c(7)) %>% 
   left_join(., block_join, by = c('street_block' = 'block')) %>% na.omit() %>% st_sf() %>% 
-  mutate(occ_col = ifelse(pct_occ >= 0 & pct_occ <= 1, pct_occ, NA))
+  mutate(occ_col = ifelse(pct_occ <= 1, pct_occ, 1))
 
 
 
@@ -365,7 +373,7 @@ histanim <- ggplot(anim_panel)+
     mapTheme()
 
 p1 <- cowplot::plot_grid(mapanim, histanim)
-animate(histanim, duration=20)
+animate(mapanim, duration=20)
 ```
 
 
