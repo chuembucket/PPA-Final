@@ -28,6 +28,7 @@ library(RSocrata)
 library(purrr)
 library(riem)
 library(gganimate)
+library(ggridges)
 
 
 sf::sf_use_s2(FALSE)
@@ -47,17 +48,33 @@ meters <- read.socrata('https://data.sfgov.org/resource/8vzz-qzz9.json') %>% st_
 ```{r load trips}
 trips <- read.socrata("https://data.sfgov.org/resource/imvp-dq3v.csv?$where=session_start_dt between '2017-06-01T00:00:00' and '2017-07-01T00:00:00'") 
 
-trips <- trips %>% mutate(
+trips1 <- read.socrata("https://data.sfgov.org/resource/imvp-dq3v.csv?$where=session_start_dt between '2017-06-01T00:00:00' and '2017-06-10T00:00:00'") 
+
+
+trips2 <- trips1 %>% mutate(
   start_time = session_start_dt %>% as_datetime(),
   end_time = session_end_dt %>% as_datetime(),
-  length = end_time - start_time) %>% filter(length > 600)
+  length_secs = (end_time - start_time),
+  rate = gross_paid_amt/as.numeric(length_secs/60),
+  hour = start_time %>% hour(),
+  dotw = start_time %>% wday(label = T),
+  weekend = ifelse(dotw %in% c('Sun','Sat'),1,0)) %>%
+  filter(length_secs > 600 & rate < .11)
 
 
 
 
 smalltrips <- trips %>% filter(start_time %>% week == 23)
 
+ggplot(trips2, aes(y = gross_paid_amt, x = length_secs, color = rate))+
+  geom_point(alpha =.05)
 
+ggplot(trips2, aes(x = rate))+
+  geom_histogram()
+
+ggplot(trips2)+
+  geom_density_ridges2(aes(x = rate, y = hour, group = hour))+
+  facet_wrap(~weekend)
 ```
 
 pull in streets, parks
@@ -101,34 +118,7 @@ trips_dt <-trips %>% filter(post_id %in% dt_meters$post_id)
 
 
 
-```{r panelling}
 
-study.panel <- 
-  expand.grid(hour_unit = unique(trips$park_time_60), 
-              block = unique(trips$street_block))
-
-nrow(study.panel)      
-
-#fill panel
-park.panel_bare <- 
-  trips %>%
-  mutate(park_counter = 1) %>%
-  right_join(study.panel, by = c('park_time_60' = 'hour_unit', 'street_block' = 'block')) %>% 
-  group_by(park_time_60, street_block) %>%
-  summarize(start_count = sum(park_counter, na.rm=T),
-            revenue = sum(gross_paid_amt, na.rm = T))
-
-
-
-```
-
-```{r}
-
-
-ggplot(trips)+
-  geom_histogram(aes(x = as.numeric(length_mins)))+
-  geom_vline(xintercept = 150)
-```
 
 
 
