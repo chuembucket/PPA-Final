@@ -27,7 +27,6 @@ library(tigris)
 library(RSocrata)
 library(purrr)
 library(riem)
-library(plotly)
 library(gganimate)
 
 
@@ -46,7 +45,7 @@ meters <- read.socrata('https://data.sfgov.org/resource/8vzz-qzz9.json') %>% st_
 ```
 
 ```{r load trips}
-trips <- read.socrata("https://data.sfgov.org/resource/imvp-dq3v.csv?$where=session_start_dt between '2017-06-01T00:00:00' and '2017-06-21T00:00:00'") 
+trips <- read.socrata("https://data.sfgov.org/resource/imvp-dq3v.csv?$where=session_start_dt between '2017-06-01T00:00:00' and '2017-07-01T00:00:00'") 
 
 trips <- trips %>% mutate(
   start_time = session_start_dt %>% as_datetime(),
@@ -56,7 +55,7 @@ trips <- trips %>% mutate(
 
 
 
-smalltrips <- trips %>% filter(park_time_60 %>% week == 23)
+smalltrips <- trips %>% filter(start_time %>% week == 23)
 
 
 ```
@@ -95,6 +94,8 @@ ggplot()+
 
 
 smalltrips_dt <-smalltrips %>% filter(post_id %in% dt_meters$post_id) 
+trips_dt <-trips %>% filter(post_id %in% dt_meters$post_id) 
+
 ```
 
 
@@ -161,7 +162,7 @@ ggplot(trips)+
 # THis is done very roughly, you might want to make this more exact
 # If a transaction is, say 45 minutes, drop tokens in tokens_00, 01, 02
 
-dat2 <- smalltrips_dt %>%
+dat2 <- trips_dt %>%
   mutate(end_interval15 = floor_date(ymd_hms(session_end_dt), unit = "15 mins"),
          start_interval15 = floor_date(ymd_hms(session_start_dt), unit = "15 mins"),
          length = end_interval15 - start_interval15,
@@ -320,7 +321,7 @@ ggplot(streets1)+
 ```
 
 ```{r}
-blocks <-   inner_join(dt_meters, smalltrips_dt %>% 
+blocks <- inner_join(dt_meters, smalltrips_dt %>% 
                            select(post_id, street_block)) %>% unique()
 
 mpb <- smalltrips_dt %>% 
@@ -331,7 +332,7 @@ block_join <- data.frame(block = NA, geometry = blocks[1,]$geometry) %>% st_sf()
 
 for(block in blocks$street_block %>% unique()){
   block1 <- blocks %>% filter(street_block == block)
-  if(nrow(block1) >= 10){
+  if(nrow(block1) >= 1){
     block2 <- st_union(block1) %>% st_sf()
     block_join <- data.frame(block = block, geometry = block2) %>% add_row(block_join, .)
 }
@@ -343,7 +344,7 @@ block_join <- block_join %>% slice(2:nrow(block_join))
 block_join$id <- seq(1,nrow(block_join))
 
 
-ggplot(block_join, aes(color = block %in% overocc))+
+ggplot(block_join, aes())+
   geom_sf()+
   theme(legend.position = 'none')
 
@@ -351,7 +352,7 @@ ggplot(block_join, aes(color = block %in% overocc))+
 ```
 
 ```{r anim}
-anim_panel <- occ_panel %>% filter(start_interval15 %>% day() %in% c(7)) %>% 
+anim_panel <- occ_panel %>% filter(start_interval15 %>% day() %in% c(7,8,9)) %>% 
   left_join(., block_join, by = c('street_block' = 'block')) %>% na.omit() %>% st_sf() %>% 
   mutate(occ_col = ifelse(pct_occ <= 1, pct_occ, 1))
 
@@ -372,8 +373,7 @@ histanim <- ggplot(anim_panel)+
     transition_manual(start_interval15) +
     mapTheme()
 
-p1 <- cowplot::plot_grid(mapanim, histanim)
-animate(mapanim, duration=20)
+animate(mapanim)
 ```
 
 
@@ -400,16 +400,16 @@ ggplot(streets)+
 
 #sdf<-riem_stations(network = 'CA_ASOS')
 weather.Data <- 
-  riem_measures(station = "SFO", date_start = "2017-06-01", date_end = "2017-06-14")
+  riem_measures(station = "SFO", date_start = "2017-06-01", date_end = "2017-07-01")
 
 weather.Panel <-  
   weather.Data %>%
   mutate_if(is.character, list(~replace(as.character(.), is.na(.), "0"))) %>% 
   replace(is.na(.), 0) %>%
-  mutate(interval60 = ymd_h(substr(valid, 1, 13))) %>%
-  mutate(week = week(interval60),
-         dotw = wday(interval60, label=TRUE)) %>%
-  group_by(interval60) %>%
+  mutate(interval15 = ymd_hms(valid) %>% floor_date(unit = "15 mins")) %>%
+  mutate(week = week(interval15),
+         dotw = wday(interval15, label=TRUE)) %>%
+  group_by(interval15) %>%
   summarize(Temperature = max(tmpf),
             Percipitation = sum(p01i),
             Wind_Speed = max(sknt)) %>%
@@ -420,20 +420,21 @@ weather.Panel <-
 
 
 ```{r idne vars add}
-park.panel <- 
-  park.panel_bare %>% 
-  arrange(street_block, park_time_60) %>% 
+park.panel1 <- 
+  occ_panel %>% 
+  mutate(occ_col = ifelse(pct_occ <= 1, pct_occ, 1)) %>% filter(total_spots > 5) %>% 
+  arrange(street_block, start_interval15) %>% 
   group_by(street_block) %>% 
-  mutate(lagHour = dplyr::lag(revenue,1),
-         lag2Hours = dplyr::lag(revenue,2),
-         lag3Hours = dplyr::lag(revenue,3),
-         lag12Hours = dplyr::lag(revenue,12),
-         lag1day = dplyr::lag(revenue,24)) %>% 
+  mutate(lagHour = dplyr::lag(occ_col,1),
+         lag2Hours = dplyr::lag(occ_col,2),
+         lag3Hours = dplyr::lag(occ_col,3),
+         lag12Hours = dplyr::lag(occ_col,12),
+         lag1day = dplyr::lag(occ_col,24)) %>% 
   ungroup() %>% 
-  left_join(weather.Panel, by = c('park_time_60' = 'interval60')) %>%
-  mutate(week = week(park_time_60),
-         dotw = wday(park_time_60, label = TRUE),
-         hour = hour(park_time_60)) 
+  left_join(weather.Panel, by = c('start_interval15' = 'interval15')) %>%
+  mutate(week = week(start_interval15),
+         dotw = wday(start_interval15, label = TRUE),
+         hour = hour(start_interval15)) 
 
 ```
 
@@ -442,8 +443,8 @@ park.panel <-
 ## training/test split
 
 ```{r}
-park.train <- filter(park.panel, week <24)
-park.test <- filter(park.panel, week == 24)
+park.train <- filter(park.panel1, week < 24)
+park.test <- filter(park.panel1, week >= 24)
 ```
 
 
@@ -453,12 +454,10 @@ model_pred <- function(dat, fit){
   pred <- predict(fit, newdata = dat)}
 
 ## start count regressions 
-reg1 <- lm(revenue ~  hour + dotw, data=park.train)
-reg2 <- lm(revenue ~  street_block + dotw, data=park.train)
-reg3 <- lm(revenue ~  street_block + hour + dotw, data=park.train)
-reg4 <- lm(revenue ~  hour + dotw + 
+
+reg4 <- lm(occ_col ~  hour + dotw + 
              lagHour + lag2Hours + lag3Hours + lag12Hours + lag1day, data=park.train)
-reg5 <- lm(revenue ~  hour + dotw + Temperature +
+reg5 <- lm(occ_col ~  hour + dotw + Temperature +
              lagHour + lag2Hours + lag3Hours + lag12Hours + lag1day, data=park.train)
 
 
@@ -468,18 +467,15 @@ park.Test.weekNest <-
 
 
 week_predictions <- 
-  park.test %>% 
-  mutate(A_Time_FE = map(.x = data, fit = reg1, .f = model_pred),
-         B_Space_FE = map(.x = data, fit = reg2, .f = model_pred),
-         C_Space_Time_FE = map(.x = data, fit = reg3, .f = model_pred),
-         D_Space_Time_Lags = map(.x = data, fit = reg4, .f = model_pred),
+  park.Test.weekNest %>% 
+  mutate(D_Space_Time_Lags = map(.x = data, fit = reg4, .f = model_pred),
          F_Space_Time_Lags_Temp = map(.x = data, fit = reg4, .f = model_pred))
 
 
 
 week_predictions <- week_predictions %>%  
   gather(Regression, Prediction, -data, -week) %>% 
-  mutate(Observed = map(data, pull, start_count),
+  mutate(Observed = map(data, pull, occ_col),
          Absolute_Error = map2(Observed, Prediction,  ~ abs(.x - .y)),
          MAE = map_dbl(Absolute_Error, mean),
          sd_AE = map_dbl(Absolute_Error, sd)) 
@@ -490,8 +486,8 @@ week_predictions %>%
   gather(Variable, MAE, -Regression, -week) %>%
   ggplot(aes(week, MAE)) + 
   geom_bar(aes(fill = Regression), position = "dodge", stat="identity") +
-  scale_fill_manual(values = palette5) +
-  scale_x_continuous(breaks = c(18,19))+
+ # scale_fill_manual(values = palette5) +
+  scale_x_continuous(breaks = c(24,25,26))+
   labs(title = "Mean Absolute Errors by model specification and training week") +
   plotTheme()
 
