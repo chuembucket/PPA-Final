@@ -29,6 +29,8 @@ library(purrr)
 library(riem)
 library(gganimate)
 library(ggridges)
+library(viridis)
+library(scales)
 
 
 sf::sf_use_s2(FALSE)
@@ -46,12 +48,12 @@ meters <- read.socrata('https://data.sfgov.org/resource/8vzz-qzz9.json') %>% st_
 ```
 
 ```{r load trips}
-trips <- read.socrata("https://data.sfgov.org/resource/imvp-dq3v.csv?$where=session_start_dt between '2017-06-01T00:00:00' and '2017-07-01T00:00:00'") 
+#trips_load <- read.socrata("https://data.sfgov.org/resource/imvp-dq3v.csv?$where=session_start_dt between #'2017-06-01T00:00:00' and '2017-07-01T00:00:00'") 
 
-trips1 <- read.socrata("https://data.sfgov.org/resource/imvp-dq3v.csv?$where=session_start_dt between '2017-06-01T00:00:00' and '2017-06-10T00:00:00'") 
+trips1 <- read.socrata("https://data.sfgov.org/resource/imvp-dq3v.csv?$where=session_start_dt between '2017-06-05T00:00:00' and '2017-06-25T00:00:00'") 
 
 
-trips2 <- trips1 %>% mutate(
+trips <- trips1 %>% mutate(
   start_time = session_start_dt %>% as_datetime(),
   end_time = session_end_dt %>% as_datetime(),
   length_secs = (end_time - start_time),
@@ -64,54 +66,68 @@ trips2 <- trips1 %>% mutate(
 
 
 
-smalltrips <- trips %>% filter(start_time %>% week == 23)
+smalltrips <- trips %>% filter(start_time %>% week == 23) 
 
-ggplot(trips2, aes(y = gross_paid_amt, x = length_secs, color = rate))+
-  geom_point(alpha =.05)
-
-ggplot(trips2, aes(x = rate))+
-  geom_histogram()
-
-ggplot(trips2)+
-  geom_density_ridges2(aes(x = rate, y = hour, group = hour))+
-  facet_wrap(~weekend)
 ```
 
 pull in streets, parks
 
-```{r}
+```{r fig.width=8, fig.height=8}
 
 
-sfbounds <- c(ymax= 100000,ymin= 63410.51,xmin= 139343.4 , xmax=177200 ) 
+sfbounds <- c(ymax= 100000, ymin= 63410.51,xmin= 139343.4 , xmax=177200 ) 
 
-water <- area_water('CA', 'San Francisco') %>% st_transform(crs = 4326) %>% filter(AWATER <= 138392892) %>% st_crop(y=sfbounds)
+water <- area_water('CA', 'San Francisco') %>% st_transform(crs = 7132)  %>% st_crop(y=sfbounds)  %>%
+  st_transform(crs = 4326)
 
-streets <- read_sf('streets.geojson') %>% st_transform(crs = 7132)%>% st_crop(y=sfbounds)
+streets <- read_sf('streets.geojson') %>% st_transform(crs = 7132)%>% st_crop(y=sfbounds) %>%
+  st_transform(crs = 4326)
+
+meters$on_offstreet_type <- meters$on_offstreet_type %>% factor(levels = c("ON", "OFF"))
 
 ggplot()+
   geom_sf(data = water, color = NA, fill = 'lightblue')+
   geom_sf(data = streets%>% filter(classcode ==5))+
   geom_sf(data = streets %>% filter(classcode ==1),size=1.1)+
-  geom_sf(data = meters, aes(color =cap_color))+
+  geom_sf(data = meters, aes(color = on_offstreet_type), shape = 1, alpha = .5)+
+  scale_color_manual(values = c('#7F00FF','#FF7F00'),labels = c("Metered", "Garage"))+
+  labs(color = '')+
+  theme(legend.position = 'bottom')+
   mapTheme()
+
+ggplot()+
+  geom_sf(data = water, color = NA, fill = 'lightblue')+
+  geom_sf(data = streets%>% filter(classcode ==5))+
+  geom_sf(data = streets %>% filter(classcode ==1),size=1.1)+
+  geom_sf(data = meters, color = '#FA7B00', shape = 1)+
+  geom_rect(aes(ymax= 37.792,ymin= 37.768,xmin= -122.426 , xmax=-122.386), fill = NA, color = 'red', size =2)+
+  labs(color = '')+
+  mapTheme()
+
+
 ```
 
 
 ```{r }
 
 #ggplotly(g)
-dtbounds <- c(ymax= 37.79,ymin= 37.77,xmin= -122.424 , xmax=-120)
+dtbounds <- c(ymax= 37.792,ymin= 37.768,xmin= -122.426 , xmax=-122.386)
 dt_meters <- meters %>% st_crop(y=dtbounds) %>% filter(meter_type == 'SS')
 
 ggplot()+
-  #geom_sf(data = water, color = NA, fill = 'lightblue')+
-  #geom_sf(data = streets%>% filter(classcode ==5))+
-  #geom_sf(data = streets %>% filter(classcode ==1),size=1.1)+
-  geom_sf(data =dt_meters)
+  geom_sf(data = water%>% st_crop(y=dtbounds), color = NA, fill = 'lightblue')+
+  geom_sf(data = streets%>% filter(classcode ==5) %>% st_crop(y=dtbounds))+
+  geom_sf(data = streets %>% filter(classcode ==1) %>% st_crop(y=dtbounds),size=1.1)+
+  geom_sf(data =dt_meters, color = '#FA7B00', shape = 1)+
+  mapTheme()
 
 
 smalltrips_dt <-smalltrips %>% filter(post_id %in% dt_meters$post_id) 
-trips_dt <-trips %>% filter(post_id %in% dt_meters$post_id) 
+
+trips_dt <-trips %>% filter(post_id %in% dt_meters$post_id) %>% mutate(
+  start_interval15 = floor_date(ymd_hms(session_start_dt), unit = "15 mins")) %>% 
+  group_by(start_interval15, street_block) %>%
+              summarise(avgrate = mean(rate, na.rm=TRUE))
 
 ```
 
@@ -223,25 +239,34 @@ transaction_panel <- study.panel %>%
 
 #%>%
  # filter(is.na(occupancy) == FALSE) %>%
-  #select(start_interval15, post_id, occupancy)
+  #
 
 # join everything
 
-transaction_panel <- left_join(transaction_panel, smalltrips_dt %>% 
-                           select(post_id, street_block) %>%
-              unique())
+transaction_panel2 <- transaction_panel %>% mutate(start_interval15 = start_interval15 %>% as_datetime()) %>% select(start_interval15, post_id, occupancy, street_block)
+
+transaction_panel1 <- left_join(transaction_panel2, trips_dt, by = c("start_interval15", "street_block"))
 
 t1 <- transaction_panel %>% filter(post_id == '202-05830')
 
 
-occ_panel <- transaction_panel %>% mutate(
+occ_panel <- transaction_panel1 %>% mutate(
   spot = 1
 ) %>% group_by(street_block, start_interval15) %>% summarise(
   parked = sum(occupancy),
   total_spots = sum(spot),
-  pct_occ = parked/total_spots
-) %>% mutate(start_interval15 = start_interval15 %>% as_datetime())
+  pct_occ = parked/total_spots, 
+  avgrate = avgrate
+) %>% mutate(start_interval15 = start_interval15 %>% as_datetime(),
+             occ_col = ifelse(pct_occ <= 1, pct_occ, 1),
+             week = week(start_interval15),
+             dotw = wday(start_interval15),
+             day = day(start_interval15))
   
+
+meanrate <- mean(occ_panel$avgrate)
+
+occ_panel$avgrate <- ifelse(is.na(occ_panel$avgrate), meanrate, occ_panel$avgrate)
 
 ```
 
@@ -253,66 +278,9 @@ overocctime <- occ_panel %>% filter(pct_occ > 1) %>% pull(start_interval15) %>% 
 ```
 
 
-```{r meter graphing}
-
-
-t <- park.panel %>%
-  group_by(park_time_60) %>% 
-  summarize(revenue = sum(revenue)) %>% 
-  ungroup()
-
-ggplot(t, aes(park_time_60, revenue)) + geom_line() +
-  #geom_vline(data = mondays, aes(xintercept = monday)) +
-  labs(title="Total Revenue per Hour",
-    subtitle="Week 22", 
-    x="", y="") +
-  plotTheme()
-
-
-
-blocks<-factor(smalltrips_dt$street_block) %>% table() %>% as.data.frame()
-meters1<-factor(smalltrips_dt$post_id) %>% table() %>% as.data.frame()
-
-
-
-
-```
-
-
-
-## making da pretty map
-
-
-
-
-
-
-```{r streets meters join}
-
-meters_buffer <- meters %>% st_buffer(50) %>% st_union()
-
-ggplot(meters_buffer)+
-  geom_sf()
-
-streets1 <- streets %>% filter(classcode ==5)
-ugh
-#streets1$metered <- st_touches(streets1, meters_buffer, prepared = T)
-
-ggplot()+
-  geom_sf(data = water, color = NA, fill = 'lightblue')+
-  geom_sf(data = streets %>% filter(classcode ==1),size=1.1)+
-  geom_sf(data = streets %>% filter(classcode ==5))+
-          #, aes(color = metered))+
-  geom_sf(data = meters, color ='red')+
-  mapTheme()
-
-ggplot(streets1)+
-  geom_sf(aes(color = metered))
-```
-
 ```{r}
 blocks <- inner_join(dt_meters, smalltrips_dt %>% 
-                           select(post_id, street_block)) %>% unique()
+                           select(post_id, street_block) %>% unique())
 
 mpb <- smalltrips_dt %>% 
   group_by(street_block) %>% 
@@ -322,7 +290,7 @@ block_join <- data.frame(block = NA, geometry = blocks[1,]$geometry) %>% st_sf()
 
 for(block in blocks$street_block %>% unique()){
   block1 <- blocks %>% filter(street_block == block)
-  if(nrow(block1) >= 1){
+  if(nrow(block1) >= 5){
     block2 <- st_union(block1) %>% st_sf()
     block_join <- data.frame(block = block, geometry = block2) %>% add_row(block_join, .)
 }
@@ -341,47 +309,156 @@ ggplot(block_join, aes())+
 
 ```
 
+
+
+```{r meter graphing}
+
+
+t <- occ_panel %>% 
+  filter(week == 25) %>%
+  group_by(start_interval15) %>% 
+  summarize(occ = mean(occ_col),
+            block = street_block)  %>% 
+  ungroup()
+
+ggplot(t)+ 
+  geom_line(aes(start_interval15, occ, color = block, group = block))+
+  scale_x_datetime(date_breaks = '1 day', date_labels = '%a')+
+  labs(title="Average occupancy of all blocks",
+    subtitle="Week 22", 
+    x="", y="")+
+  theme(legend.position = "none", axis.text.x = element_text(hjust = -1.5))+
+  plotTheme()
+
+
+
+blocks<-factor(smalltrips_dt$street_block) %>% table() %>% as.data.frame()
+meters1<-factor(smalltrips_dt$post_id) %>% table() %>% as.data.frame()
+
+
+
+
+```
+
+```{r}
+
+s1 <- occ_panel %>% group_by(street_block) %>% summarise(occ_avg = mean(occ_col)) %>% arrange(-occ_avg) %>% slice(seq(1,nrow(.),20))
+
+s2 <-occ_panel %>% group_by(street_block) %>% summarise(occ_avg = mean(occ_col)) %>% arrange(-occ_avg) %>% slice(1:20)
+
+g<- occ_panel %>% filter(day == 22 & street_block %in% s2$street_block)
+
+ggplot(g)+
+  geom_ridgeline(aes(x = start_interval15, y = reorder(street_block, occ_col), height = occ_col),
+                 scale = 1.2)+
+  labs(title = ' Occupancy % of 20 Highest Occupancy Blocks', subtitle = 'Thursday June 22, 2017', y = '', x = '' )+
+  scale_x_datetime(date_breaks = '3 hours', date_labels = '%H')
+
+h3 <-occ_panel %>% group_by(street_block) %>% summarise(occ_avg = mean(occ_col)) %>% arrange(-occ_avg) %>% left_join(block_join, by = c('street_block' = 'block')) %>% st_sf()
+
+ggplot(h3)+
+  geom_sf(aes(color = occ_avg))+
+  geom_sf(data = streets%>% filter(classcode ==5) %>% st_crop(y=dtbounds))+
+  geom_sf(data = streets %>% filter(classcode ==1) %>% st_crop(y=dtbounds),size=1.1)+
+  scale_color_viridis(labels = percent_format(accuracy = 5L))+
+  labs(color = "Average \nOccupancy")+
+  mapTheme()
+
+```
+
+```{r}
+
+h1 <- occ_panel %>% group_by(street_block) %>% summarise(occ_avg = mean(occ_col)) %>% arrange(-occ_avg) %>% slice(seq(1,nrow(.),100))
+
+h2 <-occ_panel %>% group_by(street_block) %>% summarise(occ_avg = mean(occ_col)) %>% arrange(-occ_avg) %>% slice(1:20)
+
+h<- occ_panel %>% filter(street_block %in% h1$street_block) %>%
+  mutate(timeofday = start_interval15 %>% hour() + start_interval15 %>% minute()/60)
+
+ggplot(h)+
+  geom_ridgeline(aes(x = timeofday, y = as.factor(-day), height = occ_col))+
+  labs(title = 'Occupancy % of 20 Highest Occupancy Blocks', subtitle = 'Thursday \nJune 22, 2017', y = '', x = '' )+
+  #scale_x_datetime(date_breaks = '3 hours', date_labels = '%H')+
+  facet_wrap(~street_block, scales = 'free')
+
+```
+
+## making da pretty map
+
+
+#price regeme
+
+```{r}
+
+
+trips_price <- trips1 %>% mutate(
+  start_time = session_start_dt %>% as_datetime(),
+  end_time = session_end_dt %>% as_datetime(),
+  length_secs = (end_time - start_time),
+  rate = gross_paid_amt/as.numeric(length_secs/60/60),
+  hour = start_time %>% hour(),
+  dotw = start_time %>% wday(label = T),
+  weekend = ifelse(dotw %in% c('Sun','Sat'),1,0)) %>%
+  filter(length_secs > 600 & rate < 9)
+
+
+ggplot(trips_price, aes(x = rate))+
+  geom_histogram(bins = 50)+
+  labs(title = 'Distribution of Hourly Rates',y='',x='')+
+  scale_x_continuous(breaks = c(0,2,4,6,8), labels = scales::dollar_format())+ 
+  theme(axis.text.y= element_blank())+
+  plotTheme()
+
+ggplot(trips_price, aes(y = gross_paid_amt, x = as.numeric(length_secs/60), color = rate))+
+  geom_point(alpha = .1)+
+  scale_x_continuous(breaks = seq(0,1500,180))+
+  scale_y_continuous(labels = scales::dollar_format())+ 
+  scale_color_continuous(labels = scales::dollar_format())+
+  labs(y = 'Total Paid',x='Total Minutes Purchased', color = 'Hourly \n rate')+
+  plotTheme()
+
+
+
+ggplot(trips_price)+
+  geom_density_ridges2(aes(x = rate, y = hour, group = hour))+
+  facet_wrap(~weekend)
+```
+
+
+
+
+
+
 ```{r anim}
-anim_panel <- occ_panel %>% filter(start_interval15 %>% day() %in% c(7,8,9)) %>% 
-  left_join(., block_join, by = c('street_block' = 'block')) %>% na.omit() %>% st_sf() %>% 
-  mutate(occ_col = ifelse(pct_occ <= 1, pct_occ, 1))
+anim_panel <- occ_panel %>% filter(start_interval15 %>% day() %in% c(7)) %>% 
+  left_join(., block_join, by = c('street_block' = 'block')) %>% na.omit() %>% st_sf() 
 
 
 
 mapanim <- ggplot(anim_panel, aes(color = occ_col))+
   geom_sf()+
+  scale_color_continuous(labels = scales::percent)+
   mapTheme()+
-  labs(title = "Rideshare pickups for one day in November 2018",
-         subtitle = "15 minute intervals: {current_frame}") +
+  labs(title = "Block Occupancy Percent on June 7th",
+         subtitle = "15 minute intervals: {current_frame}",
+       color = '') +
     transition_manual(start_interval15) +
     mapTheme()
+anim_save("map.gif", mapanim, duration = 10)
 
 histanim <- ggplot(anim_panel)+
-  geom_histogram(aes(x = occ_col, group = street_block), bins = 100)+
-  labs(title = "",
-         subtitle = "15 minute intervals: {current_frame}") +
+  geom_histogram(aes(x = occ_col), bins = 10)+
+  scale_x_continuous(labels = percent)+
+  labs(title = "Distribution of Occupancy % on June 7th",
+         subtitle = "15 minute intervals: {current_frame}",x='',y='# of blocks') +
     transition_manual(start_interval15) +
-    mapTheme()
+    plotTheme()
+anim_save("hist.gif", histanim, duration = 10)
 
-animate(mapanim)
+
 ```
 
 
-
-```{r}
-
-streets$length <- st_length(streets) %>% as.numeric()
-
-ggplot(streets)+
-  geom_histogram(aes(x=length)) 
-
-
-# streetsseg<-read_sf('https://data.sfgov.org/api/geospatial/3t7b-gebn?method=export&format=GeoJSON')
-# streetsseg$length <- st_length(streetsseg) %>% as.numeric()
-# 
-# ggplot(streetsseg)+
-#   geom_histogram(aes(x=length)) 
-```
 
 
 
@@ -433,8 +510,8 @@ park.panel1 <-
 ## training/test split
 
 ```{r}
-park.train <- filter(park.panel1, week < 24)
-park.test <- filter(park.panel1, week >= 24)
+park.train <- filter(park.panel1, week == 24)
+park.test <- filter(park.panel1, week == 25)
 ```
 
 
@@ -445,21 +522,62 @@ model_pred <- function(dat, fit){
 
 ## start count regressions 
 
-reg4 <- lm(occ_col ~  hour + dotw + 
+reg4 <- lm(occ_col ~  hour + dotw + Temperature +
              lagHour + lag2Hours + lag3Hours + lag12Hours + lag1day, data=park.train)
-reg5 <- lm(occ_col ~  hour + dotw + Temperature +
+reg5 <- lm(occ_col ~  hour + dotw + Temperature + avgrate +
              lagHour + lag2Hours + lag3Hours + lag12Hours + lag1day, data=park.train)
 
 
-park.Test.weekNest <- 
-  as.data.frame(park.test) %>%
-  nest(-week) 
+reg4test <- park.test %>%
+  mutate(occ.Predict = predict(reg4, park.test),
+         occ.Error = occ.Predict - occ_col,
+         occ.AbsError = abs(occ.Predict - occ_col),
+         occ.APE = (abs(occ.Predict - occ_col)) / occ.Predict,
+         reg = 'woPrice') 
+
+reg5test <- park.test %>%
+  mutate(occ.Predict = predict(reg5, park.test),
+         occ.Error = occ.Predict - occ_col,
+         occ.AbsError = abs(occ.Predict - occ_col),
+         occ.APE = (abs(occ.Predict - occ_col)) / occ.Predict,
+         reg = 'wPrice') 
 
 
+mean(reg4test$occ.APE, na.rm = T)
+mean(reg5test$occ.APE, na.rm = T)
+
+reg4a <- reg4test %>% group_by(start_interval15) %>% summarise(avg_occAPE = mean(occ.APE, na.rm=T),
+                                                             occ.Predict1 = mean(occ.Predict, na.rm=T)) %>% mutate(
+  avg_occAPE=ifelse(avg_occAPE <0 , NA, avg_occAPE)
+)
+
+reg5a <- reg5test %>% group_by(start_interval15) %>% summarise(avg_occAPE = mean(occ.APE, na.rm=T),
+                                                             occ.Predict1 = mean(occ.Predict, na.rm=T)) %>% mutate(
+  avg_occAPE=ifelse(avg_occAPE <0 , NA, avg_occAPE)
+)
+
+ggplot()+
+  geom_line(data = ghj, aes(x = start_interval15, y = avg_occAPE))
+
+ggplot(t)+ 
+  geom_line(aes(start_interval15, occ))+
+  geom_line(data = reg4a, aes(x = start_interval15, y = occ.Predict1), color = 'green')+
+  geom_line(data = reg5a, aes(x = start_interval15, y = occ.Predict1), color = 'red')+
+
+  scale_x_datetime(date_breaks = '1 day', date_labels = '%a')+
+  labs(title="Predictions on week 25",
+    subtitle="Red is hourly rate model, green is without hourly rate, black is observed", 
+    x="", y="")+
+  theme(legend.position = "none", axis.text.x = element_text(hjust = -1.5))+
+  plotTheme()
+
+```
+
+```{r }
 week_predictions <- 
   park.Test.weekNest %>% 
   mutate(D_Space_Time_Lags = map(.x = data, fit = reg4, .f = model_pred),
-         F_Space_Time_Lags_Temp = map(.x = data, fit = reg4, .f = model_pred))
+         F_Space_Time_Lags_Temp = map(.x = data, fit = reg5, .f = model_pred))
 
 
 
@@ -477,7 +595,7 @@ week_predictions %>%
   ggplot(aes(week, MAE)) + 
   geom_bar(aes(fill = Regression), position = "dodge", stat="identity") +
  # scale_fill_manual(values = palette5) +
-  scale_x_continuous(breaks = c(24,25,26))+
+  scale_x_continuous(breaks = c(24,25))+
   labs(title = "Mean Absolute Errors by model specification and training week") +
   plotTheme()
 
