@@ -124,7 +124,9 @@ ggplot()+
 
 smalltrips_dt <-smalltrips %>% filter(post_id %in% dt_meters$post_id) 
 
-trips_dt <-trips %>% filter(post_id %in% dt_meters$post_id) %>% mutate(
+trips_dt <-trips %>% filter(post_id %in% dt_meters$post_id)
+
+trips_dt_avgrate <- trips_dt %>% mutate(
   start_interval15 = floor_date(ymd_hms(session_start_dt), unit = "15 mins")) %>% 
   group_by(start_interval15, street_block) %>%
               summarise(avgrate = mean(rate, na.rm=TRUE))
@@ -184,7 +186,20 @@ dat2 <- trips_dt %>%
          tokens_08 = ifelse(tokens >= 9, 1, 0),
          tokens_09 = ifelse(tokens >= 10, 1, 0),
          tokens_10 = ifelse(tokens >= 11, 1, 0),
-         tokens_11 = ifelse(tokens >= 12, 1, 0))
+         tokens_11 = ifelse(tokens >= 12, 1, 0),
+         tokens_12 = ifelse(tokens >= 13, 1, 0),
+         tokens_13 = ifelse(tokens >= 14, 1, 0),
+         tokens_14 = ifelse(tokens >= 15, 1, 0),
+         tokens_15 = ifelse(tokens >= 16, 1, 0),
+         tokens_16 = ifelse(tokens >= 17, 1, 0),
+         tokens_17 = ifelse(tokens >= 18, 1, 0),
+         tokens_18 = ifelse(tokens >= 19, 1, 0),
+         tokens_19 = ifelse(tokens >= 20, 1, 0),
+         tokens_20 = ifelse(tokens >= 21, 1, 0),
+         tokens_21 = ifelse(tokens >= 22, 1, 0),
+         tokens_22 = ifelse(tokens >= 23, 1, 0),
+         tokens_23 = ifelse(tokens >= 24, 1, 0),
+         tokens_24 = ifelse(tokens >= 25, 1, 0))
 
 # Summarize this data by start time and meter
 
@@ -201,7 +216,20 @@ dat3 <- dat2 %>%
             tokens_08 = sum(tokens_08),
             tokens_09 = sum(tokens_09),
             tokens_10 = sum(tokens_10),
-            tokens_11 = sum(tokens_11))
+            tokens_11 = sum(tokens_11),
+            tokens_12 = sum(tokens_12),
+            tokens_13 = sum(tokens_13),
+            tokens_14 = sum(tokens_14),
+            tokens_15 = sum(tokens_15),
+            tokens_16 = sum(tokens_16),
+            tokens_17 = sum(tokens_17),
+            tokens_18 = sum(tokens_18),
+            tokens_19 = sum(tokens_19),
+            tokens_20 = sum(tokens_20),
+            tokens_21 = sum(tokens_21),
+            tokens_22 = sum(tokens_22),
+            tokens_23 = sum(tokens_23),
+            tokens_24 = sum(tokens_24))
 
 # Create a panel consisting of all the time/meter observations in the set
 # Add a day of the year to each observation, join it to the transaction data
@@ -232,10 +260,23 @@ transaction_panel <- study.panel %>%
          lag08 = ifelse(is.na(lag(tokens_08)) == FALSE, lag(tokens_08,8), 0),
          lag09 = ifelse(is.na(lag(tokens_08)) == FALSE, lag(tokens_09,9), 0),
          lag10 = ifelse(is.na(lag(tokens_10)) == FALSE, lag(tokens_10,10), 0),
-         lag11 = ifelse(is.na(lag(tokens_11)) == FALSE, lag(tokens_11,11), 0)) %>%
+         lag11 = ifelse(is.na(lag(tokens_11)) == FALSE, lag(tokens_11,11), 0),
+         lag12 = ifelse(is.na(lag(tokens_10)) == FALSE, lag(tokens_12,12), 0),
+         lag13 = ifelse(is.na(lag(tokens_10)) == FALSE, lag(tokens_13,13), 0),
+         lag14 = ifelse(is.na(lag(tokens_10)) == FALSE, lag(tokens_14,14), 0),
+         lag15 = ifelse(is.na(lag(tokens_10)) == FALSE, lag(tokens_15,15), 0),
+         lag16 = ifelse(is.na(lag(tokens_10)) == FALSE, lag(tokens_16,16), 0),
+         lag17 = ifelse(is.na(lag(tokens_10)) == FALSE, lag(tokens_17,17), 0),
+         lag18 = ifelse(is.na(lag(tokens_10)) == FALSE, lag(tokens_18,18), 0),
+         lag19 = ifelse(is.na(lag(tokens_10)) == FALSE, lag(tokens_19,19), 0),
+         lag20 = ifelse(is.na(lag(tokens_10)) == FALSE, lag(tokens_20,20), 0),
+         lag21 = ifelse(is.na(lag(tokens_10)) == FALSE, lag(tokens_21,21), 0),
+         lag22 = ifelse(is.na(lag(tokens_10)) == FALSE, lag(tokens_22,22), 0),
+         lag23 = ifelse(is.na(lag(tokens_10)) == FALSE, lag(tokens_23,23), 0),
+         lag24 = ifelse(is.na(lag(tokens_10)) == FALSE, lag(tokens_24,24), 0)) %>%
   mutate_all(funs(ifelse(is.na(.), 0, .))) %>% 
   mutate(occupancy = tokens_00 + lag01 + lag02 + lag03+ lag04 + lag05 +
-           lag06 + lag07 + lag08 + lag09 + lag10 + lag11)
+           lag06 + lag07 + lag08 + lag09 + lag10 + lag11 + lag12 + lag13+lag14+lag15+lag16+lag17+lag18+lag19+lag20+lag21+lag22+lag23+lag24)
 
 #%>%
  # filter(is.na(occupancy) == FALSE) %>%
