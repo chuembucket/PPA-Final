@@ -50,25 +50,56 @@ meters <- read.socrata('https://data.sfgov.org/resource/8vzz-qzz9.json') %>% st_
 ```{r load trips}
 #trips_load <- read.socrata("https://data.sfgov.org/resource/imvp-dq3v.csv?$where=session_start_dt between #'2017-06-01T00:00:00' and '2017-07-01T00:00:00'") 
 
-trips1 <- read.socrata("https://data.sfgov.org/resource/imvp-dq3v.csv?$where=session_start_dt between '2017-06-05T00:00:00' and '2017-06-25T00:00:00'") 
+#trips1 <- read.socrata("https://data.sfgov.org/resource/imvp-dq3v.csv?$where=session_start_dt between '2017-06-05T00:00:00' and '#2017-06-25T00:00:00'") 
+
+trips1day <- read.socrata("https://data.sfgov.org/resource/imvp-dq3v.csv?$where=session_start_dt between '2021-06-08T00:00:00' and '2021-06-09T00:00:00'") 
 
 
-trips <- trips1 %>% mutate(
+
+trips <- trips1day %>% mutate(
   start_time = session_start_dt %>% as_datetime(),
   end_time = session_end_dt %>% as_datetime(),
   length_secs = (end_time - start_time),
   rate = gross_paid_amt/as.numeric(length_secs/60),
   hour = start_time %>% hour(),
   dotw = start_time %>% wday(label = T),
-  weekend = ifelse(dotw %in% c('Sun','Sat'),1,0)) %>%
-  filter(length_secs > 600 & rate < .11)
+  weekend = ifelse(dotw %in% c('Sun','Sat'),1,0),
+  end_interval15 = floor_date(ymd_hms(session_end_dt), unit = "15 mins") %>% as_datetime(),
+  start_interval15 = floor_date(ymd_hms(session_start_dt), unit = "15 mins")  %>% as_datetime(),
+  length = end_interval15 - start_interval15) %>%
+  filter(length_secs > 600 & length_secs < 10800  & meter_event_type == 'NS')
 
 
+sfd<- trips %>% group_by(payment_type) %>% summarise(avglen = mean(length), avgrate = mean(rate))
 
+smalltrips <- trips 
 
-smalltrips <- trips %>% filter(start_time %>% week == 23) 
+#%>% filter(start_time %>% week == 23 & dotw == "Mon") 
 
 ```
+
+```{r}
+ggplot(trips)+
+  geom_histogram(aes(x = length, fill = meter_event_type))
+```
+
+
+
+<!-- Motivate the analysis – “What is the use case; why would someone want to replicate your analysis and why would they use this approach?” -->
+
+
+<!-- Describe the data you used. -->
+<!-- Describe your exploratory analysis using maps and plots. -->
+<!-- What is the spatial or space/time process? -->
+<!-- Describe your modeling approach and show how you arrived at your final model. -->
+<!-- Validate your model with cross-validation and describe how your predictions are useful (accuracy vs. generalizability). -->
+<!-- Provide additional maps and data visualizations to show that your model is useful. -->
+<!-- Talk about how your analysis meets the use case you set out to address. -->
+<!-- What could you do to make the analysis better? -->
+
+
+
+
 
 pull in streets, parks
 
@@ -85,6 +116,9 @@ streets <- read_sf('streets.geojson') %>% st_transform(crs = 7132)%>% st_crop(y=
 
 meters$on_offstreet_type <- meters$on_offstreet_type %>% factor(levels = c("ON", "OFF"))
 
+```
+
+```{r }
 ggplot()+
   geom_sf(data = water, color = NA, fill = 'lightblue')+
   geom_sf(data = streets%>% filter(classcode ==5))+
@@ -122,9 +156,9 @@ ggplot()+
   mapTheme()
 
 
-smalltrips_dt <-smalltrips %>% filter(post_id %in% dt_meters$post_id) 
+smalltrips_dt <-smalltrips %>% filter(post_id %in% dt_meters$post_id)
 
-trips_dt <-trips %>% filter(post_id %in% dt_meters$post_id)
+trips_dt <-trips %>% filter(post_id %in% dt_meters$post_id) 
 
 trips_dt_avgrate <- trips_dt %>% mutate(
   start_interval15 = floor_date(ymd_hms(session_start_dt), unit = "15 mins")) %>% 
@@ -135,6 +169,43 @@ trips_dt_avgrate <- trips_dt %>% mutate(
 
 
 
+
+```{r}
+blocks <- inner_join(dt_meters, smalltrips_dt %>% 
+                           select(post_id, street_block) %>% unique())
+
+meterblock <- smalltrips_dt %>% select(post_id, street_block) %>% unique() 
+
+metercount <- smalltrips_dt %>% select(post_id, street_block) %>% unique() %>% 
+  mutate(metercounter = 1) %>% group_by(street_block) %>% summarise(metercount = sum(metercounter))
+
+
+mpb <- smalltrips_dt %>% 
+  group_by(street_block) %>% 
+  summarise(meters_per_block = length(unique(post_id)))
+
+block_join <- data.frame(block = NA, geometry = blocks[1,]$geometry) %>% st_sf()
+
+for(block in blocks$street_block %>% unique()){
+  block1 <- blocks %>% filter(street_block == block)
+  if(nrow(block1) >= 5){
+    block2 <- st_union(block1) %>% st_sf()
+    block_join <- data.frame(block = block, geometry = block2) %>% add_row(block_join, .)
+}
+  }
+
+
+block_join <- block_join %>% slice(2:nrow(block_join))
+
+block_join$id <- seq(1,nrow(block_join))
+
+
+ggplot(block_join, aes())+
+  geom_sf()+
+  theme(legend.position = 'none')
+
+
+```
 
 
 
@@ -170,11 +241,8 @@ trips_dt_avgrate <- trips_dt %>% mutate(
 # THis is done very roughly, you might want to make this more exact
 # If a transaction is, say 45 minutes, drop tokens in tokens_00, 01, 02
 
-dat2 <- trips_dt %>%
-  mutate(end_interval15 = floor_date(ymd_hms(session_end_dt), unit = "15 mins"),
-         start_interval15 = floor_date(ymd_hms(session_start_dt), unit = "15 mins"),
-         length = end_interval15 - start_interval15,
-         tokens = as.numeric(length )/ 900,
+dat3 <- smalltrips_dt %>% group_by(start_interval15, post_id) %>%
+  mutate(tokens = as.numeric(max(length) )/ 900,
          tokens_00 = ifelse(tokens >= 1, 1, 0),
          tokens_01 = ifelse(tokens >= 2, 1, 0),
          tokens_02 = ifelse(tokens >= 3, 1, 0),
@@ -203,34 +271,33 @@ dat2 <- trips_dt %>%
 
 # Summarize this data by start time and meter
 
-dat3 <- dat2 %>%
-  group_by(start_interval15, post_id) %>%
-  summarize(tokens_00 = sum(tokens_00),
-            tokens_01 = sum(tokens_01),
-            tokens_02 = sum(tokens_02),
-            tokens_03 = sum(tokens_03),
-            tokens_04 = sum(tokens_04),
-            tokens_05 = sum(tokens_05),
-            tokens_06 = sum(tokens_06),
-            tokens_07 = sum(tokens_07),
-            tokens_08 = sum(tokens_08),
-            tokens_09 = sum(tokens_09),
-            tokens_10 = sum(tokens_10),
-            tokens_11 = sum(tokens_11),
-            tokens_12 = sum(tokens_12),
-            tokens_13 = sum(tokens_13),
-            tokens_14 = sum(tokens_14),
-            tokens_15 = sum(tokens_15),
-            tokens_16 = sum(tokens_16),
-            tokens_17 = sum(tokens_17),
-            tokens_18 = sum(tokens_18),
-            tokens_19 = sum(tokens_19),
-            tokens_20 = sum(tokens_20),
-            tokens_21 = sum(tokens_21),
-            tokens_22 = sum(tokens_22),
-            tokens_23 = sum(tokens_23),
-            tokens_24 = sum(tokens_24))
-
+# dat3 <- dat2 %>%
+#   group_by(start_interval15, post_id) %>%
+#   summarize(tokens_00 = sum(tokens_00),
+#             tokens_01 = sum(tokens_01),
+#             tokens_02 = sum(tokens_02),
+#             tokens_03 = sum(tokens_03),
+#             tokens_04 = sum(tokens_04),
+#             tokens_05 = sum(tokens_05),
+#             tokens_06 = sum(tokens_06),
+#             tokens_07 = sum(tokens_07),
+#             tokens_08 = sum(tokens_08),
+#             tokens_09 = sum(tokens_09),
+#             tokens_10 = sum(tokens_10),
+#             tokens_11 = sum(tokens_11),
+#             tokens_12 = sum(tokens_12),
+#             tokens_13 = sum(tokens_13),
+#             tokens_14 = sum(tokens_14),
+#             tokens_15 = sum(tokens_15),
+#             tokens_16 = sum(tokens_16),
+#             tokens_17 = sum(tokens_17),
+#             tokens_18 = sum(tokens_18),
+#             tokens_19 = sum(tokens_19),
+#             tokens_20 = sum(tokens_20),
+#             tokens_21 = sum(tokens_21),
+#             tokens_22 = sum(tokens_22),
+#             tokens_23 = sum(tokens_23),
+#             tokens_24 = sum(tokens_24))
 # Create a panel consisting of all the time/meter observations in the set
 # Add a day of the year to each observation, join it to the transaction data
 # This might need to be tinkered with to make sure every time period for every meter is included
@@ -240,43 +307,45 @@ study.panel <-
   expand.grid(start_interval15=unique(dat3$start_interval15), 
               post_id = unique(dat3$post_id)) %>%
   mutate(doty = yday(start_interval15)) %>%
-  left_join(., dat3)
+  left_join(., dat3) %>%
+  arrange(start_interval15) %>%
+  mutate_at(c(20:45), ~replace_na(.,0))
+
+
 
 # Estimate occupancy but compiling the current tokens and the previous tokens
 # that carry forward - i think (i think) the observations at 15:00 hours are the people who start
 # the day parking - not every place has the same metered hours
 
-transaction_panel <- study.panel %>%
-  replace(is.na(.), 0) %>%
-  arrange(start_interval15) %>%
+transaction_panel <- study.panel  %>%
   group_by(post_id, doty) %>%  
-  mutate(lag01 = ifelse(is.na(lag(tokens_01)) == FALSE, lag(tokens_01,1), 0),
-         lag02 = ifelse(is.na(lag(tokens_02)) == FALSE, lag(tokens_02,2), 0),
-         lag03 = ifelse(is.na(lag(tokens_03)) == FALSE, lag(tokens_03,3), 0),
-         lag04 = ifelse(is.na(lag(tokens_04)) == FALSE, lag(tokens_04,4), 0),
-         lag05 = ifelse(is.na(lag(tokens_05)) == FALSE, lag(tokens_05,5), 0),
-         lag06 = ifelse(is.na(lag(tokens_06)) == FALSE, lag(tokens_06,6), 0),
-         lag07 = ifelse(is.na(lag(tokens_07)) == FALSE, lag(tokens_07,7), 0),
-         lag08 = ifelse(is.na(lag(tokens_08)) == FALSE, lag(tokens_08,8), 0),
-         lag09 = ifelse(is.na(lag(tokens_08)) == FALSE, lag(tokens_09,9), 0),
-         lag10 = ifelse(is.na(lag(tokens_10)) == FALSE, lag(tokens_10,10), 0),
-         lag11 = ifelse(is.na(lag(tokens_11)) == FALSE, lag(tokens_11,11), 0),
-         lag12 = ifelse(is.na(lag(tokens_10)) == FALSE, lag(tokens_12,12), 0),
-         lag13 = ifelse(is.na(lag(tokens_10)) == FALSE, lag(tokens_13,13), 0),
-         lag14 = ifelse(is.na(lag(tokens_10)) == FALSE, lag(tokens_14,14), 0),
-         lag15 = ifelse(is.na(lag(tokens_10)) == FALSE, lag(tokens_15,15), 0),
-         lag16 = ifelse(is.na(lag(tokens_10)) == FALSE, lag(tokens_16,16), 0),
-         lag17 = ifelse(is.na(lag(tokens_10)) == FALSE, lag(tokens_17,17), 0),
-         lag18 = ifelse(is.na(lag(tokens_10)) == FALSE, lag(tokens_18,18), 0),
-         lag19 = ifelse(is.na(lag(tokens_10)) == FALSE, lag(tokens_19,19), 0),
-         lag20 = ifelse(is.na(lag(tokens_10)) == FALSE, lag(tokens_20,20), 0),
-         lag21 = ifelse(is.na(lag(tokens_10)) == FALSE, lag(tokens_21,21), 0),
-         lag22 = ifelse(is.na(lag(tokens_10)) == FALSE, lag(tokens_22,22), 0),
-         lag23 = ifelse(is.na(lag(tokens_10)) == FALSE, lag(tokens_23,23), 0),
-         lag24 = ifelse(is.na(lag(tokens_10)) == FALSE, lag(tokens_24,24), 0)) %>%
+  mutate(lag01 = ifelse(is.na(lag(tokens_01,1)) == FALSE, lag(tokens_01,1), 0),
+         lag02 = ifelse(is.na(lag(tokens_02,2)) == FALSE, lag(tokens_02,2), 0),
+         lag03 = ifelse(is.na(lag(tokens_03,3)) == FALSE, lag(tokens_03,3), 0),
+         lag04 = ifelse(is.na(lag(tokens_04,4)) == FALSE, lag(tokens_04,4), 0),
+         lag05 = ifelse(is.na(lag(tokens_05,5)) == FALSE, lag(tokens_05,5), 0),
+         lag06 = ifelse(is.na(lag(tokens_06,6)) == FALSE, lag(tokens_06,6), 0),
+         lag07 = ifelse(is.na(lag(tokens_07,7)) == FALSE, lag(tokens_07,7), 0),
+         lag08 = ifelse(is.na(lag(tokens_08,8)) == FALSE, lag(tokens_08,8), 0),
+         lag09 = ifelse(is.na(lag(tokens_08,9)) == FALSE, lag(tokens_09,9), 0),
+         lag10 = ifelse(is.na(lag(tokens_10,10)) == FALSE, lag(tokens_10,10), 0),
+         lag11 = ifelse(is.na(lag(tokens_11,11)) == FALSE, lag(tokens_11,11), 0),
+         lag12 = ifelse(is.na(lag(tokens_12,12)) == FALSE, lag(tokens_12,12), 0),
+         lag13 = ifelse(is.na(lag(tokens_13,13)) == FALSE, lag(tokens_13,13), 0),
+         lag14 = ifelse(is.na(lag(tokens_14,14)) == FALSE, lag(tokens_14,14), 0),
+         lag15 = ifelse(is.na(lag(tokens_15,15)) == FALSE, lag(tokens_15,15), 0),
+         lag16 = ifelse(is.na(lag(tokens_16,16)) == FALSE, lag(tokens_16,16), 0),
+         lag17 = ifelse(is.na(lag(tokens_17,17)) == FALSE, lag(tokens_17,17), 0),
+         lag18 = ifelse(is.na(lag(tokens_18,18)) == FALSE, lag(tokens_18,18), 0),
+         lag19 = ifelse(is.na(lag(tokens_19,19)) == FALSE, lag(tokens_19,19), 0),
+         lag20 = ifelse(is.na(lag(tokens_20,20)) == FALSE, lag(tokens_20,20), 0),
+         lag21 = ifelse(is.na(lag(tokens_21,21)) == FALSE, lag(tokens_21,21), 0),
+         lag22 = ifelse(is.na(lag(tokens_22,22)) == FALSE, lag(tokens_22,22), 0),
+         lag23 = ifelse(is.na(lag(tokens_23,23)) == FALSE, lag(tokens_23,23), 0),
+         lag24 = ifelse(is.na(lag(tokens_24,24)) == FALSE, lag(tokens_24,24), 0)) %>%
   mutate_all(funs(ifelse(is.na(.), 0, .))) %>% 
-  mutate(occupancy = tokens_00 + lag01 + lag02 + lag03+ lag04 + lag05 +
-           lag06 + lag07 + lag08 + lag09 + lag10 + lag11 + lag12 + lag13+lag14+lag15+lag16+lag17+lag18+lag19+lag20+lag21+lag22+lag23+lag24)
+  mutate(occupancy = ifelse(tokens_00 + lag01 + lag02 + lag03+ lag04 + lag05 +
+           lag06 + lag07 + lag08 + lag09 + lag10 + lag11 + lag12 + lag13+lag14+lag15+lag16+lag17+lag18+lag19+lag20+lag21+lag22+lag23+lag24 >= 1, 1, 0))
 
 #%>%
  # filter(is.na(occupancy) == FALSE) %>%
@@ -284,33 +353,44 @@ transaction_panel <- study.panel %>%
 
 # join everything
 
-transaction_panel2 <- transaction_panel %>% mutate(start_interval15 = start_interval15 %>% as_datetime()) %>% select(start_interval15, post_id, occupancy, street_block)
-
-transaction_panel1 <- left_join(transaction_panel2, trips_dt, by = c("start_interval15", "street_block"))
-
-t1 <- transaction_panel %>% filter(post_id == '202-05830')
+transaction_panel3 <- transaction_panel %>% left_join(meterblock, by = c("post_id", "street_block")) %>% 
+  relocate(occupancy, street_block, .after = doty) %>% filter(street_block != 0)
 
 
-occ_panel <- transaction_panel1 %>% mutate(
-  spot = 1
-) %>% group_by(street_block, start_interval15) %>% summarise(
+
+transaction_panel2 <- transaction_panel3 %>% select(start_interval15, post_id, occupancy, street_block) %>% 
+  mutate(start_interval15 = start_interval15 %>% as_datetime())
+
+transaction_panel1 <- left_join(transaction_panel2, smalltrips_dt, by = c("start_interval15", "street_block")) %>% left_join(metercount, by = 'street_block')
+
+
+
+occ_panel <- transaction_panel1 %>% 
+  group_by(street_block, start_interval15) %>% summarise(
   parked = sum(occupancy),
-  total_spots = sum(spot),
-  pct_occ = parked/total_spots, 
-  avgrate = avgrate
-) %>% mutate(start_interval15 = start_interval15 %>% as_datetime(),
-             occ_col = ifelse(pct_occ <= 1, pct_occ, 1),
+  total_spots = metercount,
+  pct_occ = parked/total_spots
+) %>% mutate(occ_col = ifelse(pct_occ <= 1, pct_occ, 1),
              week = week(start_interval15),
              dotw = wday(start_interval15),
-             day = day(start_interval15))
+             day = day(start_interval15),
+             hour = hour(start_interval15)) 
   
 
-meanrate <- mean(occ_panel$avgrate)
+#meanrate <- mean(occ_panel$avgrate)
 
-occ_panel$avgrate <- ifelse(is.na(occ_panel$avgrate), meanrate, occ_panel$avgrate)
+#occ_panel$avgrate <- ifelse(is.na(occ_panel$avgrate), meanrate, occ_panel$avgrate)
 
 ```
 
+```{r}
+ggplot(occ_panel)+
+  geom_histogram(aes(x=pct_occ, fill = hour))+
+  geom_vline(xintercept = 1)
+```
+
+
+ 
 ```{r over occ analysis}
 overoccblock <- occ_panel %>% filter(pct_occ > 1) %>% pull(street_block) %>% unique()
 
@@ -318,37 +398,6 @@ overocctime <- occ_panel %>% filter(pct_occ > 1) %>% pull(start_interval15) %>% 
 
 ```
 
-
-```{r}
-blocks <- inner_join(dt_meters, smalltrips_dt %>% 
-                           select(post_id, street_block) %>% unique())
-
-mpb <- smalltrips_dt %>% 
-  group_by(street_block) %>% 
-  summarise(meters_per_block = length(unique(post_id)))
-
-block_join <- data.frame(block = NA, geometry = blocks[1,]$geometry) %>% st_sf()
-
-for(block in blocks$street_block %>% unique()){
-  block1 <- blocks %>% filter(street_block == block)
-  if(nrow(block1) >= 5){
-    block2 <- st_union(block1) %>% st_sf()
-    block_join <- data.frame(block = block, geometry = block2) %>% add_row(block_join, .)
-}
-  }
-
-
-block_join <- block_join %>% slice(2:nrow(block_join))
-
-block_join$id <- seq(1,nrow(block_join))
-
-
-ggplot(block_join, aes())+
-  geom_sf()+
-  theme(legend.position = 'none')
-
-
-```
 
 
 
@@ -471,9 +520,10 @@ ggplot(trips_price)+
 
 
 ```{r anim}
-anim_panel <- occ_panel %>% filter(start_interval15 %>% day() %in% c(7)) %>% 
+anim_panel <- occ_panel  %>% 
   left_join(., block_join, by = c('street_block' = 'block')) %>% na.omit() %>% st_sf() 
 
+#%>% filter(start_interval15 %>% day() %in% c(7))
 
 
 mapanim <- ggplot(anim_panel, aes(color = occ_col))+
@@ -485,7 +535,7 @@ mapanim <- ggplot(anim_panel, aes(color = occ_col))+
        color = '') +
     transition_manual(start_interval15) +
     mapTheme()
-anim_save("map.gif", mapanim, duration = 10)
+anim_save("map1.gif", mapanim, duration = 10)
 
 histanim <- ggplot(anim_panel)+
   geom_histogram(aes(x = occ_col), bins = 10)+
@@ -494,7 +544,9 @@ histanim <- ggplot(anim_panel)+
          subtitle = "15 minute intervals: {current_frame}",x='',y='# of blocks') +
     transition_manual(start_interval15) +
     plotTheme()
-anim_save("hist.gif", histanim, duration = 10)
+anim_save("hist2.gif", histanim, duration = 30)
+
+
 
 
 ```
