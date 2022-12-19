@@ -10,6 +10,11 @@ output:
     code_folding: hide
 ---
 
+# SF Park App 
+## Introduction
+
+The use case for this analysis is to provide potential drivers with an indication of where parking is available in advance, so that they can plan accordingly and save time and money. The approach taken is to utilize San Francisco open parking data to forecast parking demand at a block level, which will give potential drivers a better understanding of where they are most likely to find a parking spot. This analysis is useful for any city with limited parking resources. By replicating the analysis, cities can gain insight into the occupancy of each parking block and predict the demand for parking in the future. This can help city planners allocate resources more efficiently and create better parking policies. It can also help drivers, visitors and residents of the city in finding parking spots more quickly and reduce their carbon footprint.
+
 ```{r setup}
 knitr::opts_chunk$set(
   warning=FALSE,
@@ -49,19 +54,14 @@ source("https://raw.githubusercontent.com/urbanSpatial/Public-Policy-Analytics-L
 
 Pull in SF data
 
-```{r load meters}
+```{r load meters, cache = FALSE}
 meters <- read.socrata('https://data.sfgov.org/resource/8vzz-qzz9.json') %>% st_as_sf(coords = c('longitude','latitude'),crs = 4326)
 
 ```
 
-```{r load trips}
-#trips_load <- read.socrata("https://data.sfgov.org/resource/imvp-dq3v.csv?$where=session_start_dt between #'2017-06-01T00:00:00' and '2017-07-01T00:00:00'") 
+```{r load trips, cache = TRUE}
 
 trips1 <- read.socrata("https://data.sfgov.org/resource/imvp-dq3v.csv?$where=session_start_dt between '2021-06-07T00:00:00' and '2021-06-28T00:00:00'") 
-
-#trips1day <- read.socrata("https://data.sfgov.org/resource/imvp-dq3v.csv?$where=session_start_dt between '2021-06-08T00:00:00' and '2021-06-11T00:00:00'") 
-
-
 
 trips <- trips1 %>% mutate(
   start_time = session_start_dt %>% as_datetime(),
@@ -77,11 +77,7 @@ trips <- trips1 %>% mutate(
   filter(length_secs > 600 & length_secs < 21600)
 
 
-sfd<- trips %>% group_by(payment_type) %>% summarise(avglen = mean(length), avgrate = mean(rate))
 
-smalltrips <- trips 
-
-#%>% filter(start_time %>% week == 23 & dotw == "Mon") 
 
 ```
 
@@ -93,19 +89,6 @@ ggplot(trips)+
 
 ```
 
-
-
-<!-- Motivate the analysis – “What is the use case; why would someone want to replicate your analysis and why would they use this approach?” -->
-
-
-<!-- Describe the data you used. -->
-<!-- Describe your exploratory analysis using maps and plots. -->
-<!-- What is the spatial or space/time process? -->
-<!-- Describe your modeling approach and show how you arrived at your final model. -->
-<!-- Validate your model with cross-validation and describe how your predictions are useful (accuracy vs. generalizability). -->
-<!-- Provide additional maps and data visualizations to show that your model is useful. -->
-<!-- Talk about how your analysis meets the use case you set out to address. -->
-<!-- What could you do to make the analysis better? -->
 
 
 
@@ -138,7 +121,9 @@ ggplot()+
   labs(color = '')+
   theme(legend.position = 'bottom')+
   mapTheme()
+```
 
+```{r }
 ggplot()+
   geom_sf(data = water, color = NA, fill = 'lightblue')+
   geom_sf(data = streets%>% filter(classcode ==5))+
@@ -166,7 +151,6 @@ ggplot()+
   mapTheme()
 
 
-smalltrips_dt <-smalltrips %>% filter(post_id %in% dt_meters$post_id) 
 
 trips_dt <-trips %>% filter(post_id %in% dt_meters$post_id) 
 
@@ -181,18 +165,16 @@ trips_dt_avgrate <- trips_dt %>% mutate(
 
 
 ```{r}
-blocks <- inner_join(dt_meters, smalltrips_dt %>% 
+blocks <- inner_join(dt_meters, trips_dt %>% 
                            select(post_id, street_block) %>% unique())
 
-meterblock <- smalltrips_dt %>% select(post_id, street_block) %>% unique() 
+meterblock <- trips_dt %>% select(post_id, street_block) %>% unique() 
 
-metercount <- smalltrips_dt %>% select(post_id, street_block) %>% unique() %>% 
+metercount <- trips_dt %>% select(post_id, street_block) %>% unique() %>% 
   mutate(metercounter = 1) %>% group_by(street_block) %>% summarise(metercount = sum(metercounter))
 
 
-mpb <- smalltrips_dt %>% 
-  group_by(street_block) %>% 
-  summarise(meters_per_block = length(unique(post_id)))
+
 
 block_join <- data.frame(block = NA, geometry = blocks[1,]$geometry) %>% st_sf()
 
@@ -210,10 +192,6 @@ block_join <- block_join %>% slice(2:nrow(block_join))
 block_join$id <- seq(1,nrow(block_join))
 
 
-ggplot(block_join, aes())+
-  geom_sf()+
-  theme(legend.position = 'none')
-
 
 ```
 
@@ -222,7 +200,7 @@ ggplot(block_join, aes())+
 
 
 ## occupany code
-```{r}
+```{r occ code, cache = TRUE}
 # estimate parking occupancy using Sf Park data
 # Code by Michael Fichman - mfichman@upenn.edu
 
@@ -251,7 +229,7 @@ ggplot(block_join, aes())+
 # THis is done very roughly, you might want to make this more exact
 # If a transaction is, say 45 minutes, drop tokens in tokens_00, 01, 02
 
-dat2 <- smalltrips_dt %>% group_by(start_interval15, post_id) %>%
+dat2 <- trips_dt %>% group_by(start_interval15, post_id) %>%
   mutate(tokens = as.numeric(sum(length) )/ 900,
          tokens_00 = ifelse(tokens >= 1, 1, 0),
          tokens_01 = ifelse(tokens >= 2, 1, 0),
@@ -322,7 +300,7 @@ study.panel <-
   arrange(start_interval15)
 #%>%
   #mutate_at(c(20:45), ~replace_na(.,0))
-length(unique(dat3$start_interval15)) * length(unique(dat3$post_id))
+#length(unique(dat3$start_interval15)) * length(unique(dat3$post_id))
 
 # Estimate occupancy but compiling the current tokens and the previous tokens
 # that carry forward - i think (i think) the observations at 15:00 hours are the people who start
@@ -358,9 +336,7 @@ transaction_panel <- study.panel  %>%
          (tokens_00 + lag01 + lag02 + lag03+ lag04 + lag05 +
            lag06 + lag07 + lag08 + lag09 + lag10 + lag11 + lag12 + lag13+lag14+lag15+lag16+lag17+lag18+lag19+lag20+lag21+lag22+lag23+lag24 >= 1, 1, 0)) %>% ungroup()
 
-xki <- data.frame(a =c(1,2,5,9, 6), b = c(3,5,6,5,7)) %>% mutate(
-  c = na.omit(a)
-)
+
 
 # join everything
 
@@ -372,9 +348,7 @@ transaction_panel3 <- transaction_panel %>% left_join(meterblock, by = c("post_i
 
 transaction_panel2 <- transaction_panel3 %>% select(start_interval15, post_id, occupancy, street_block) %>% left_join(metercount)
 
-transaction_panel1 <- left_join(transaction_panel2, smalltrips_dt, by = c("start_interval15", "street_block")) 
 
-looky <- transaction_panel3 %>% arrange(post_id, start_interval15) %>% slice(1:10000) #%>% relocate(occupancy, length, .after = doty)
 
 
 occ_panel <- transaction_panel2 %>% 
@@ -389,14 +363,13 @@ occ_panel <- transaction_panel2 %>%
              day = day(start_interval15),
              hour1 = hour(start_interval15),
              weekend = ifelse(dotw %in% c('Sun','Sat'),1,0)) %>% filter(total_spots > 5)
-  
+```
+
+```{r }
 
 ggplot(occ_panel)+
-  geom_histogram(aes(x = pct_occ, color = occ50))
+  geom_histogram(aes(x = pct_occ, color = occ60))
 
-#meanrate <- mean(occ_panel$avgrate)
-
-#occ_panel$avgrate <- ifelse(is.na(occ_panel$avgrate), meanrate, occ_panel$avgrate)
 
 ```
 
@@ -406,14 +379,6 @@ ggplot(occ_panel , aes(x=occ_col))+
   facet_wrap(~hour1)
 ```
 
-
- 
-```{r over occ analysis}
-overoccblock <- occ_panel %>% filter(pct_occ > 1) %>% pull(street_block) %>% unique()
-
-overocctime <- occ_panel %>% filter(pct_occ > 1) %>% pull(start_interval15) %>% unique()
-
-```
 
 
 
@@ -452,9 +417,6 @@ og2 <- ggplot(t)+
 
 plot_grid(og1,og2,ncol=1)
 
-
-#blocks<-factor(smalltrips_dt$street_block) %>% table() %>% as.data.frame()
-#meters1<-factor(smalltrips_dt$post_id) %>% table() %>% as.data.frame()
 
 ```
 
@@ -504,50 +466,11 @@ ggplot(h)+
 ## making da pretty map
 
 
-#price regeme
-
-```{r}
-
-
-trips_price <- trips1 %>% mutate(
-  start_time = session_start_dt %>% as_datetime(),
-  end_time = session_end_dt %>% as_datetime(),
-  length_secs = (end_time - start_time),
-  rate = gross_paid_amt/as.numeric(length_secs/60/60),
-  hour = start_time %>% hour(),
-  dotw = start_time %>% wday(label = T),
-  weekend = ifelse(dotw %in% c('Sun','Sat'),1,0)) %>%
-  filter(length_secs > 600 & rate < 9)
-
-
-ggplot(trips_price, aes(x = rate))+
-  geom_histogram(bins = 50)+
-  labs(title = 'Distribution of Hourly Rates',y='',x='')+
-  scale_x_continuous(breaks = c(0,2,4,6,8), labels = scales::dollar_format())+ 
-  theme(axis.text.y= element_blank())+
-  plotTheme()
-
-ggplot(trips_price, aes(y = gross_paid_amt, x = as.numeric(length_secs/60), color = rate))+
-  geom_point(alpha = .1)+
-  scale_x_continuous(breaks = seq(0,1500,180))+
-  scale_y_continuous(labels = scales::dollar_format())+ 
-  scale_color_continuous(labels = scales::dollar_format())+
-  labs(y = 'Total Paid',x='Total Minutes Purchased', color = 'Hourly \n rate')+
-  plotTheme()
-
-
-
-ggplot(trips_price)+
-  geom_density_ridges2(aes(x = rate, y = hour, group = hour))+
-  facet_wrap(~weekend)
-```
 
 
 
 
-
-
-```{r anim}
+```{r anim, cache=TRUE}
 anim_panel <- occ_panel  %>%  filter(start_interval15 %>% day() %in% c(12,13,14)) %>% 
   left_join(., block_join, by = c('street_block' = 'block')) %>% na.omit() %>% st_sf() 
 
@@ -563,7 +486,9 @@ mapanim <- ggplot(anim_panel, aes(color = occ_col))+
        color = '') +
     transition_manual(start_interval15) +
     mapTheme()
-anim_save("map1.gif", mapanim, duration = 20)
+
+animate(mapanim, duration = 10)
+
 
 histanim <- ggplot(anim_panel)+
   geom_histogram(aes(x = occ_col), bins = 10)+
@@ -572,7 +497,9 @@ histanim <- ggplot(anim_panel)+
          subtitle = "15 minute intervals: {current_frame}",x='',y='# of blocks') +
     transition_manual(start_interval15) +
     plotTheme()
-anim_save("hist2.gif", histanim, duration = 30)
+
+
+animate(histanim, duration = 30)
 
 
 
@@ -641,8 +568,7 @@ park.test <- filter(park.panel1, day > 20)
 
 
 ```{r}
-model_pred <- function(dat, fit){
-  pred <- predict(fit, newdata = dat)}
+
 
 ## start count regressions 
 # 
@@ -650,7 +576,7 @@ model_pred <- function(dat, fit){
 #                  data=sinkTrain %>% dplyr::select(-y, -X),
 #                  family="binomial" (link="logit"))
 
-reg4 <- glm(occ50 ~  hour1 + dotw + Temperature +
+reg4 <- glm(occ60 ~  hour1 + dotw + Temperature +
              lagHour + lag2Hours + lag3Hours + lag12Hours + lag1day, data=park.train, family = 'binomial' (link = 'logit'))
 
 
@@ -660,10 +586,13 @@ pR2(reg4)
 #              lagHour + lag2Hours + lag3Hours + lag12Hours + lag1day, data=park.train, family = 'binomial' (link = 'logit'))
 
 
-testProbs <- data.frame(Outcome = as.factor(park.test$occ50),
-                        Probs = predict(reg4, park.test, type= "response"))  %>%
-  mutate(predOutcome  = as.factor(ifelse(testProbs$Probs > 0.5 , 1, 0)))
+testProbs <- data.frame(Outcome = as.factor(park.test$occ60),
+                        Probs = predict(reg4, park.test, type= "response")) 
 
+testProbs$predOutcome  = as.factor(ifelse(testProbs$Probs > 0.5 , 1, 0))
+```
+
+```{r }
 ggplot(testProbs, aes(x = Probs, fill = as.factor(Outcome))) + 
   geom_density() +
   facet_grid(Outcome ~ ., scales = 'free') +
@@ -673,47 +602,43 @@ ggplot(testProbs, aes(x = Probs, fill = as.factor(Outcome))) +
   plotTheme() + theme(strip.text.x = element_text(size = 18),
         legend.position = "none")
 
+```
 
+```{r }
 caret::confusionMatrix(testProbs$predOutcome, testProbs$Outcome, 
                        positive = "1")
 
+```
 
+```{r }
 ggplot(testProbs, aes(d = as.numeric(testProbs$Outcome), m = Probs)) +
   geom_roc(n.cuts = 50, labels = FALSE, colour = "#FE9900") +
   style_roc(theme = theme_grey) +
   geom_abline(slope = 1, intercept = 0, size = 1.5, color = 'grey') +
   labs(title = "ROC Curve - SF Parking Model")
-# reg5test <- park.test %>%
-#   mutate(occ.Predict = predict(reg5, park.test),
-#          occ.Error = occ.Predict - occ_col,
-#          occ.AbsError = abs(occ.Predict - occ_col),
-#          occ.APE = (abs(occ.Predict - occ_col)) / occ.Predict,
-#          reg = 'wPrice') 
+```
 
 
 
-ggplot()+
-  geom_line(data = ghj, aes(x = start_interval15, y = avg_occAPE))
-
-ggplot(t)+ 
-  geom_line(aes(start_interval15, occ))+
-  geom_line(data = reg4a, aes(x = start_interval15, y = occ.Predict1), color = 'green')+
-  geom_line(data = reg5a, aes(x = start_interval15, y = occ.Predict1), color = 'red')+
-  scale_x_datetime(date_breaks = '1 day', date_labels = '%a')+
-  labs(title="Predictions on week 25",
-    subtitle="Red is hourly rate model, green is without hourly rate, black is observed", 
-    x="", y="")+
-  theme(legend.position = "none", axis.text.x = element_text(hjust = -1.5))+
-  plotTheme()
+```{r }
+# ggplot(t)+ 
+#   geom_line(aes(start_interval15, occ))+
+#   geom_line(data = reg4, aes(x = start_interval15, y = occ.Predict1), color = 'green')+
+#   scale_x_datetime(date_breaks = '1 day', date_labels = '%a')+
+#   labs(title="Predictions on week 25",
+#     subtitle="Red is hourly rate model, green is without hourly rate, black is observed", 
+#     x="", y="")+
+#   theme(legend.position = "none", axis.text.x = element_text(hjust = -1.5))+
+#   plotTheme()
 
 ```
 
 ```{r }
 ctrl <- trainControl(method = "cv", number = 10, classProbs=TRUE, summaryFunction=twoClassSummary)
 
-park.panel1$occ50fact <- ifelse(park.panel1$occ50 == 1, 'No_parking', 'Parking')
+park.panel1$occ60fact <- ifelse(park.panel1$occ60 == 1, 'No_parking', 'Parking')
 
-cvFit <- train(occ50fact ~  hour1 + dotw + Temperature +
+cvFit <- train(occ60fact ~  hour1 + dotw + Temperature +
              lagHour + lag2Hours + lag3Hours + lag12Hours + lag1day, data=park.panel1,
                 method="glm", family="binomial",
                 metric="ROC", trControl = ctrl)
